@@ -18,10 +18,16 @@ An AI assistant for your telephone line.
 3. Add the following to your /etc/asterisk/extensions_custom.conf
 
 `[ai-entry]
+
 exten => s,1,NoOp(AI Entry Point)
+
  same => n,Progress()
+
  same => n,AGI(ai/ai_answer.py,${CALLERID(num)},${CALLERID(name)})
- same => n,Hangup()`
+
+ same => n,Hangup()
+ 
+ `
 
 
 4. Reload your Dial Plans: asterisk -rx "dialplan reload"
