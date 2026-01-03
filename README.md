@@ -2,15 +2,15 @@
 
 An AI assistant for your telephone line.
 
-- FreePBX (Asterisk)
+- FreePBX (Asterisk AGI)
+- FastAPI
 - Vosk STT
 - Google TTS
 - Gemini 3.0
-- Green-API (WhatsApp)
-- Home Assistant
-- FastAPI
 - langChain
 - Redis
+- Green-API (WhatsApp)
+- Home Assistant
 
 ## Installation
 1. Copy into /var/lib/asterisk/agi-bin/ai
@@ -26,3 +26,7 @@ An AI assistant for your telephone line.
 ```
 4. Reload your Dial Plans: asterisk -rx "dialplan reload"
 5. Use your Custom Destination in an IVR or elsewhere.
+
+
+## Next Steps
+Real-time chat (audio streaming)
