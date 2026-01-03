@@ -149,6 +149,8 @@ class ChatModel:
     ##===================================================
     def route_by_step(self,state):
         step = state.get("step")
+        if step == "collect_whatsapp_message":
+            return END
         if step == "confirm_whatsapp_message":
             return "whatsapp_confirm"
 
@@ -213,10 +215,10 @@ class ChatModel:
         graph.add_node("lights", self.lights_node)
         graph.add_node("goodbye", self.goodbye_node)
         graph.set_entry_point("intent")
-
-        graph.add_edge("whatsapp_ask", END)
+        
+        graph.add_conditional_edges("whatsapp_ask", self.route_by_step)
         graph.add_conditional_edges("whatsapp_confirm", self.route_by_step)
-
+        
         graph.add_conditional_edges(
             "intent",
             lambda s: s["intent"],

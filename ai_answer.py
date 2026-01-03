@@ -134,6 +134,11 @@ class AIAnswer:
             self.ai_state = AIState.START
             return "confirm_whatsapp_message"
 
+        elif cresp.action == "whatsapp" and cresp.step == "confirm_whatsapp_message":
+            self.playVoice(cresp.response_text)
+            self.ai_state = AIState.ANYTHING_ELSE
+            return None
+
         self.ai_state = AIState.ANYTHING_ELSE
         return None
         
@@ -167,9 +172,6 @@ class AIAnswer:
 
             elif self.ai_state == AIState.RUN_ACTIONS:
                 next_step = self.doActions(cresp)
-                if next_step is not None:
-                    self.ai_state = AIState.PROCESSING
-                
 
             elif self.ai_state == AIState.ANYTHING_ELSE:
                 self.playVoice("Can I help with anything else?")

@@ -1,0 +1,12 @@
+requests
+vosk
+asterisk
+wave
+gtts
+pydub
+dotenv
+fastapi
+redis
+langgraph
+langchain_core
+langchain_google_genai

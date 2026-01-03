@@ -46,15 +46,6 @@ def chat(req: ChatRequest):
 
     print(f"reply:{reply} action:{action} response:{response_text} step:{step}")
     #rdis.set(f"chat_hist_{req.call_id}", f"{chat_hist}\n{req.text}\n{reply}\n" )
-    
-    
-    # if action == "lights":
-    #     ha_toggle_light()
-    #     action = None
-    # if action == "whatsapp":
-    #     whatsapp_message(f"{req.text} {reply}")
-    #     action = None
-
     return ChatResponse(
         reply=reply,
         action=action,
