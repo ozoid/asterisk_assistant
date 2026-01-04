@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     action: str | None = None
-    response_text: str | None = None
+    intent: str | None = None
     step: str | None = None
 ##===================================================  
 # ##===================================================

@@ -9,12 +9,6 @@ app = FastAPI()
 graph_app = ChatModel()
 rdis = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 ##===================================================
-# @app.post("/warmup")
-# async def warmup(background_tasks: BackgroundTasks):
-#     background_tasks.add_task(do_warmup)
-#     return {"status": "warming"}
-
-##===================================================
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     chat_hist = ''#rdis.get(f"chat_hist_{req.call_id}")
@@ -25,23 +19,25 @@ def chat(req: ChatRequest):
             "intent": None,
             "action": None,
             "step": req.step,
-            "chat_history": chat_hist
+            "reply": '',
+            "phone": req.call_id,
+            "name": req.call_name,
         },
         config={"thread_id": req.call_id}
     )
     if chat_hist is None:
         chat_hist = ""
-    reply = result["messages"][-1].content
-    action = result.get("intent")
-    response_text = result.get("response_text")
+    reply = result.get("reply") #result["messages"][-1].content
+    action = result.get("action")
+    intent = result.get("intent")
     step = result.get("step")
 
-    print(f"reply:{reply} action:{action} response:{response_text} step:{step}")
+    print(f"reply:{reply} action:{action} intent:{intent} step:{step}")
     #rdis.set(f"chat_hist_{req.call_id}", f"{chat_hist}\n{req.text}\n{reply}\n" )
     return ChatResponse(
         reply=reply,
         action=action,
-        response_text=response_text,
+        intent=intent,
         step=step,
     )
 ##===================================================

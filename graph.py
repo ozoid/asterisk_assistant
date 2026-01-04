@@ -2,7 +2,7 @@ from typing import TypedDict, List, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage,HumanMessage
 from dotenv import dotenv_values
 ##===================================================
 Intent = [
@@ -21,6 +21,8 @@ class CallState(TypedDict):
     action: str | None              # the action to do when returned
     step: str | None                # what step of the action are we at
     reply: str | None               # the response to say to the caller
+    phone:str | None                # the phone number
+    name:str | None                 # the callers Name
 ##===================================================
 class ChatModel:
     def __init__(self, *args, **kwargs):
@@ -42,17 +44,19 @@ class ChatModel:
             - Be polite and concise and stay positive.
             - If the caller wants to end the call, say goodbye.
         """)
-        self.MEETING_PROMPT = SystemMessage(content="""
+        self.MEETING_PROMPT = """
             This part of the conversation requires you to take details for a meeting.
             The meeting can be an online Zoom or Microsoft Teams meeting or and in person meeting and requires the following information from the caller:
             - the date and time of the meeting.
             - if the meeting is online the callers email address.
+            - if the caller wants to be called back at the specified date and time, please ensure the phone number "{phone}" is correct with the caller.
             - if the meeting is in person, a physical UK address including postcode.
-        """)
-        self.MEETING_CONFIRM_PROMPT = SystemMessage(content="""
+        """
+
+        self.MEETING_CONFIRM_PROMPT = """
             This part of the conversation requires you to confirm the details for a meeting.
-            Please ensure you have the date and time, the email address if online or the physical address if the meeting is in person.
-        """)
+            Please ensure you have the date and time, the email address if online or the physical address if the meeting is in person or the phone number "{phone}" is correct.
+        """
         self.INTENT_PROMPT = """
             Classify the caller's intent.
 
@@ -99,9 +103,7 @@ class ChatModel:
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply":reply,
             "action": None
         }
@@ -113,7 +115,19 @@ class ChatModel:
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [reply],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
+            "reply": reply,
+            "action": None
+        }
+    ##===================================================
+    def unknown_node(self,state: CallState):
+        print("node_unknown")
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + state["messages"])
+        reply = self.cleanResponse(response)
+        return {
+            **state,
+            "step": None,
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": None
         }
@@ -124,9 +138,7 @@ class ChatModel:
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "voicemail"
         }
@@ -137,9 +149,7 @@ class ChatModel:
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "hangup"
         }
@@ -150,9 +160,7 @@ class ChatModel:
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "lights"
         }
@@ -163,9 +171,7 @@ class ChatModel:
         return {
             **state,
             "action": "whatsapp",
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "step": "collect_whatsapp_message",
             "reply": reply,
         }
@@ -176,22 +182,18 @@ class ChatModel:
         return {
             **state,
             "action": "whatsapp",
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "step": "confirm_whatsapp_message",
             "reply": reply
         }
     ##===================================================
     def meeting_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
+        response:AIMessage = self.llm.invoke([SystemMessage(content=self.SYSTEM_PROMPT)] + [SystemMessage(content=self.MEETING_PROMPT.format(phone=state.phone))] + state["messages"])
         reply = self.cleanResponse(response)
         return {
             **state,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "meeting",
             "step": "meeting_ask"
@@ -199,13 +201,11 @@ class ChatModel:
     ##===================================================
     def meeting_confirm_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_CONFIRM_PROMPT] + state["messages"])
+        response:AIMessage = self.llm.invoke([SystemMessage(content=self.SYSTEM_PROMPT)] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state.phone))] + state["messages"])
         reply = self.cleanResponse(response)
         return {
             **state,
-            "messages": state["messages"] + [
-                SystemMessage(content=reply)
-            ],
+            "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "meeting",
             "step": "meeting_confirm"
@@ -214,11 +214,11 @@ class ChatModel:
     def route_by_step(self,state):
         step = state.get("step")
         if step == "collect_whatsapp_message":
-            return END
+            return "whatsapp_ask"
         if step == "confirm_whatsapp_message":
             return "whatsapp_confirm"
         if step == "meeting_ask":
-            return END
+            return "meeting_ask"
         if step == "meeting_confirm":
             return "meeting_confirm"
         return "intent"
@@ -245,20 +245,19 @@ class ChatModel:
                 **state,
                 "intent": "unknown"
             }    
-
-        intent:AIMessage = self.llm.invoke(
-            self.INTENT_PROMPT.format(text=last_msg)
-        ).content[0]["text"]
-
-        print(f"Intent chosen:{intent}")
-
-        if intent.strip() not in Intent:
-            print(f"intent {intent} not in Intent")
+        namestr = ""
+        if state["name"] is not None and state["name"] != "":
+            namestr = f"\nThe callers name is {state['name']}"
+        intent:AIMessage = self.llm.invoke(self.INTENT_PROMPT.format(text=last_msg+namestr))
+        reply = self.cleanResponse(intent)
+        print(f"Intent chosen:{reply}")
+        if reply not in Intent:
+            print(f"intent {reply} not in Intents")
             #intent = "unknown"
 
         return {
             **state,
-            "intent": intent
+            "intent": reply
         }
     ##===================================================    
     def build_graph(self):
@@ -266,8 +265,9 @@ class ChatModel:
         graph.add_node("intent", self.intent_node)
         graph.add_node("greeting", self.greeting_node)
         graph.add_node("question", self.question_node)
+        graph.add_node("unknown", self.unknown_node)
         graph.add_node("voicemail", self.voicemail_node)
-        graph.add_node("meeting", self.meeting_node)
+        graph.add_node("meeting_ask", self.meeting_node)
         graph.add_node("meeting_confirm",self.meeting_confirm_node)
         graph.add_node("whatsapp_ask", self.whatsapp_node)        # ask for message
         graph.add_node("whatsapp_confirm", self.whatsapp_confirm_node)
@@ -287,7 +287,7 @@ class ChatModel:
                 "greeting": "greeting",
                 "question": "question",
                 "voicemail": END,
-                "meeting": "meeting",
+                "meeting": "meeting_ask",
                 "whatsapp": "whatsapp_ask",
                 "lights": "lights",
                 "goodbye": "goodbye",
@@ -308,7 +308,8 @@ class ChatModel:
         graph.add_edge("greeting", END)
         graph.add_edge("question", END)
         graph.add_edge("voicemail", END)
-        graph.add_edge("meeting", END)
+        graph.add_edge("meeting_confirm", END)
+        graph.add_edge("whatsapp_confirm", END)
         graph.add_edge("lights", END)
         graph.add_edge("goodbye", END)
         

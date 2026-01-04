@@ -113,7 +113,7 @@ class AIAnswer:
         jval = resp.json()
         cresp.reply = jval["reply"]
         cresp.action = jval["action"]
-        cresp.response_text = jval["response_text"]
+        cresp.intent = jval["intent"]
         cresp.step = jval["step"]
         return cresp
     ##===================================================
@@ -138,24 +138,24 @@ class AIAnswer:
         '''
         if cresp.action == None or cresp.action == "":
             self.agi.verbose(f"NOACTION",3)
-            self.setResult(cresp.response_text, ResultCode.UNKNOWN)
+            self.setResult(cresp.reply, ResultCode.UNKNOWN)
             return
         self.agi.verbose(f"Action:{cresp.action} Step:{cresp.step}",3)
 
         if cresp.action == "hangup":
-            self.setResult(cresp.response_text,ResultCode.HANGUP)
+            self.setResult(cresp.reply,ResultCode.HANGUP)
         elif cresp.action == "voicemail":
-            self.setResult(cresp.response_text,ResultCode.VOICEMAIL)
+            self.setResult(cresp.reply,ResultCode.VOICEMAIL)
         elif cresp.action == "meeting" and cresp.step == "meeting_ask":
-            self.setResult(cresp.response_text,ResultCode.MEETING_ASK)
+            self.setResult(cresp.reply,ResultCode.MEETING_ASK)
         elif cresp.action == "meeting" and cresp.step == "meeting_confirm":
-            self.setResult(cresp.response_text,ResultCode.MEETING_CONFIRM)
+            self.setResult(cresp.reply,ResultCode.MEETING_CONFIRM)
         elif cresp.action == "lights":
-            self.setResult(cresp.response_text,ResultCode.LIGHTS)
+            self.setResult(cresp.reply,ResultCode.LIGHTS)
         elif cresp.action == "whatsapp" and cresp.step == "collect_whatsapp_message":
-            self.setResult(cresp.response_text,ResultCode.WA_ASK)
+            self.setResult(cresp.reply,ResultCode.WA_ASK)
         elif cresp.action == "whatsapp" and cresp.step != "collect_whatsapp_message":
-            self.setResult(cresp.response_text,ResultCode.WA_CONFIRM)
+            self.setResult(cresp.reply,ResultCode.WA_CONFIRM)
     ##===================================================
     def doActions(self,cresp:ChatResponse):
         '''Do the action that was chosen and change the state'''
@@ -173,8 +173,12 @@ class AIAnswer:
             self.agi.hangup()
             self.ai_state = AIState.END
             return None
-        elif action.result == ResultCode.MEETING:
-
+        elif action.result == ResultCode.MEETING_ASK:
+            self.playVoice(cresp.reply,self.unique_id)
+            self.ai_state = AIState.START
+            return "meeting_confirm"
+        elif action.result == ResultCode.MEETING_CONFIRM:
+            self.playVoice(cresp.reply,self.unique_id)
             self.ai_state = AIState.START
             return None
         elif action.result == ResultCode.LIGHTS:
@@ -183,12 +187,12 @@ class AIAnswer:
             self.ai_state = AIState.ANYTHING_ELSE
             return None
         elif action.result == ResultCode.WA_ASK:
-            self.playVoice(cresp.response_text,self.unique_id)
+            self.playVoice(cresp.reply,self.unique_id)
             self.ai_state = AIState.START
             return "confirm_whatsapp_message"
         elif action.result == ResultCode.WA_CONFIRM:
-            self.executor.submit(self.whatsapp_message,cresp.response_text, timeout=30)
-            self.playVoice(cresp.response_text,self.unique_id)
+            self.executor.submit(self.whatsapp_message,cresp.reply, timeout=30)
+            self.playVoice(cresp.reply,self.unique_id)
             self.ai_state = AIState.ANYTHING_ELSE
             return None
         self.ai_state = AIState.ANYTHING_ELSE
@@ -196,10 +200,11 @@ class AIAnswer:
     ##===================================================
     def quickFind(self,text):
         '''Bypass AI and search the stt result for keywords'''
-        def _quickFind(self,text):
+        def _quickFind(text):
             vmkeys = ["voicemail","voice mail"]
             wakeys = ["whatsapp","what's up","what lap"]
             likeys = ["lights"]
+            zmkeys = ["zoom", "teams", "meeting", "call back"]
             vm = [kw for kw in vmkeys if (kw in text.lower())]
             if len(vm)>0: return "voicemail"
             wa = [kw for kw in wakeys if (kw in text.lower())]
@@ -209,7 +214,8 @@ class AIAnswer:
             return None
         #-------------------------------------
         found = _quickFind(text)    #TODO: only if in intent mode..
-        if found is not None:       
+        step = None
+        if found is not None: 
             self.agi.verbose(f"QuickFind:{found}",3)
             if found == "whatsapp":
                 step = "collect_whatsapp_message"
@@ -231,9 +237,9 @@ class AIAnswer:
             #--------------------------------------
             elif self.ai_state == AIState.RECORD:
                 text = self.recordAndConvert(turn)
+                self.agi.verbose(f"{text}")
                 (found,step) = self.quickFind(text)
                 if found is not None:       
-                    self.agi.verbose(f"QuickFind:{found}",3)
                     cresp.action = found
                     cresp.step = step
                     self.doResult(cresp,None,None)

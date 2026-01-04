@@ -2,7 +2,7 @@
 
 An AI assistant for your telephone line.
 
-- FreePBX (Asterisk AGI)
+- FreePBX (Asterisk 22.6.0)
 - FastAPI
 - Vosk STT
 - Google TTS
