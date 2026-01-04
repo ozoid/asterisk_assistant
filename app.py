@@ -1,27 +1,19 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI #, BackgroundTasks
 from langchain_core.messages import HumanMessage
 from graph import ChatModel
 from models import ChatRequest, ChatResponse
-from home_assistant import HomeAssistant
-from whatsapp import WhatsApp
+
 import redis
 ##===================================================
 app = FastAPI()
 graph_app = ChatModel()
 rdis = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 ##===================================================
-@app.post("/warmup")
-async def warmup(background_tasks: BackgroundTasks):
-    background_tasks.add_task(do_warmup)
-    return {"status": "warming"}
-##===================================================
-def ha_toggle_light():
-    ha = HomeAssistant()
-    ha.toggle_hallway_light("on")
-##===================================================
-def whatsapp_message(message):
-    wa = WhatsApp()
-    wa.post_whatsApp(message)
+# @app.post("/warmup")
+# async def warmup(background_tasks: BackgroundTasks):
+#     background_tasks.add_task(do_warmup)
+#     return {"status": "warming"}
+
 ##===================================================
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):

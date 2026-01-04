@@ -7,17 +7,17 @@ class HomeAssistant:
         self.HA_URL = config['HA_URL']
         self.HA_TOKEN = config['HA_TOKEN']
         self.headers = {
-            "Authorization": f"Bearer {TOKEN}",
+            "Authorization": f"Bearer {self.HA_TOKEN}",
             "Content-Type": "application/json",
         }
     ##===================================================
-    def toggle_hallway_light(self,state: str):
-        service = "turn_on" if state == "on" else "turn_off"
+    def toggle_hallway_light(self):
+        service = "toggle"
         data = {
             "entity_id": "light.hall_light"
         }
         requests.post(
-            f"{HA_URL}/api/services/light/{service}",
+            f"{self.HA_URL}/api/services/light/{service}",
             headers=self.headers,
             json=data,
             timeout=5

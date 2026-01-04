@@ -2,10 +2,10 @@ from typing import TypedDict, List, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
 from dotenv import dotenv_values
 ##===================================================
-Intent = Literal[
+Intent = [
             "greeting",
             "question",
             "voicemail",
@@ -16,12 +16,11 @@ Intent = Literal[
         ]
 ##===================================================
 class CallState(TypedDict):
-    messages: List[BaseMessage]
-    intent: Intent | None
-    action: str | None
-    step: str | None
-    chat_history: str | None
-    response_text: str | None
+    messages: List[BaseMessage]     # History of messages
+    intent:str                      # the intent discovered initially
+    action: str | None              # the action to do when returned
+    step: str | None                # what step of the action are we at
+    reply: str | None               # the response to say to the caller
 ##===================================================
 class ChatModel:
     def __init__(self, *args, **kwargs):
@@ -38,12 +37,22 @@ class ChatModel:
         self.SYSTEM_PROMPT = SystemMessage(content="""
             You are a telephone voice assistant.
             Rules:
-            - Keep replies under 2 short sentences
-            - Ask only one question at a time
-            - Be polite and concise
-            - If the caller wants to end the call, say goodbye
+            - Keep replies under 2 short sentences.
+            - Ask only one question at a time.
+            - Be polite and concise and stay positive.
+            - If the caller wants to end the call, say goodbye.
         """)
-
+        self.MEETING_PROMPT = SystemMessage(content="""
+            This part of the conversation requires you to take details for a meeting.
+            The meeting can be an online Zoom or Microsoft Teams meeting or and in person meeting and requires the following information from the caller:
+            - the date and time of the meeting.
+            - if the meeting is online the callers email address.
+            - if the meeting is in person, a physical UK address including postcode.
+        """)
+        self.MEETING_CONFIRM_PROMPT = SystemMessage(content="""
+            This part of the conversation requires you to confirm the details for a meeting.
+            Please ensure you have the date and time, the email address if online or the physical address if the meeting is in person.
+        """)
         self.INTENT_PROMPT = """
             Classify the caller's intent.
 
@@ -62,89 +71,144 @@ class ChatModel:
         """
         
         self.do_warmup()
+    ##===================================================
+    def do_warmup(self):
+        self.llm.invoke("Say OK")
         self.graph = self.build_graph()
+        self.graph.invoke({
+             "messages": [],
+             "intent": None,
+             "step": None
+         },
+         config={"thread_id": "00"}
+        )
+        print("Warmup complete")
+    ##===================================================
+    def cleanResponse(self,response:AIMessage):
+        if response.content is None:
+            return ''
+        if len(response.content) == 0:
+            return ''
+        if response.content[0]['text'] is not None:
+            return response.content[0]['text']
+        return ''
     ##===================================================
     def greeting_node(self,state: CallState):
         print("node_greeting")
+        reply = "Hello! How can I help you today?"
         return {
             **state,
             "step": None,
             "messages": state["messages"] + [
-                SystemMessage(content="Hello! How can I help you today?")
+                SystemMessage(content=reply)
             ],
+            "reply":reply,
             "action": None
         }
     ##===================================================
     def question_node(self,state: CallState):
         print("node_question")
-        response = self.llm.invoke([self.SYSTEM_PROMPT] + state["messages"])
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + state["messages"])
+        reply = self.cleanResponse(response)
         return {
             **state,
             "step": None,
-            "messages": state["messages"] + [response],
+            "messages": state["messages"] + [reply],
+            "reply": reply,
             "action": None
         }
     ##===================================================
     def voicemail_node(self,state: CallState):
         print("node_voicemail")
+        reply = "Please leave your message after the tone."
         return {
             **state,
             "step": None,
             "messages": state["messages"] + [
-                SystemMessage(content="Please leave your message after the tone.")
+                SystemMessage(content=reply)
             ],
+            "reply": reply,
             "action": "voicemail"
         }
     ##===================================================
     def goodbye_node(self,state: CallState):
         print("node_goodbye")
+        reply = "Goodbye. Have a nice day."
         return {
             **state,
             "step": None,
             "messages": state["messages"] + [
-                SystemMessage(content="Goodbye. Have a nice day.")
+                SystemMessage(content=reply)
             ],
+            "reply": reply,
             "action": "hangup"
         }
     ##===================================================
     def lights_node(self,state: CallState):
         print("node_lights")
+        reply = "I have toggled the hallway light."
         return {
             **state,
             "step": None,
             "messages": state["messages"] + [
-                SystemMessage(content="I have toggled the hallway light.")
+                SystemMessage(content=reply)
             ],
+            "reply": reply,
             "action": "lights"
         }
     ##===================================================
     def whatsapp_node(self,state: CallState):
         print("node_whatsapp")
+        reply = "What is the WhatsApp message you would like to send?"
         return {
             **state,
+            "action": "whatsapp",
+            "messages": state["messages"] + [
+                SystemMessage(content=reply)
+            ],
             "step": "collect_whatsapp_message",
-            "response_text": "What is the message you would like to send?",
+            "reply": reply,
         }
     ##===================================================
     def whatsapp_confirm_node(self,state: CallState):
         print("node_whatsapp_confirm")
-
+        reply = "Your WhatsApp message has been sent."
         return {
             **state,
+            "action": "whatsapp",
+            "messages": state["messages"] + [
+                SystemMessage(content=reply)
+            ],
             "step": "confirm_whatsapp_message",
-            "response_text": "Your WhatsApp message has been sent."
+            "reply": reply
         }
-
     ##===================================================
     def meeting_node(self,state: CallState):
         print("node_meeting")
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
+        reply = self.cleanResponse(response)
         return {
             **state,
-            # "messages": state["messages"] + [
-            #     SystemMessage(content="When would you like to schedule a meeting?")
-            # ],
-            "response_text": "When would you like to schedule a meeting?",
-            "action": "meeting"
+            "messages": state["messages"] + [
+                SystemMessage(content=reply)
+            ],
+            "reply": reply,
+            "action": "meeting",
+            "step": "meeting_ask"
+        }
+    ##===================================================
+    def meeting_confirm_node(self,state: CallState):
+        print("node_meeting")
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_CONFIRM_PROMPT] + state["messages"])
+        reply = self.cleanResponse(response)
+        return {
+            **state,
+            "messages": state["messages"] + [
+                SystemMessage(content=reply)
+            ],
+            "reply": reply,
+            "action": "meeting",
+            "step": "meeting_confirm"
         }
     ##===================================================
     def route_by_step(self,state):
@@ -153,7 +217,10 @@ class ChatModel:
             return END
         if step == "confirm_whatsapp_message":
             return "whatsapp_confirm"
-
+        if step == "meeting_ask":
+            return END
+        if step == "meeting_confirm":
+            return "meeting_confirm"
         return "intent"
     ##===================================================
     def route_by_intent(self,state):
@@ -170,38 +237,29 @@ class ChatModel:
     ##===================================================
     def intent_node(self,state: CallState):
         print("node_intent")
-        last_msg = state["messages"][-1].content
+        last_msg = ""
+        if len(state["messages"]) >0:
+            last_msg = state["messages"][-1].content
+        else:
+            return {
+                **state,
+                "intent": "unknown"
+            }    
 
-        intent = self.llm.invoke(
+        intent:AIMessage = self.llm.invoke(
             self.INTENT_PROMPT.format(text=last_msg)
         ).content[0]["text"]
 
         print(f"Intent chosen:{intent}")
 
         if intent.strip() not in Intent:
-            print("intent not in Intent")
+            print(f"intent {intent} not in Intent")
             #intent = "unknown"
 
         return {
             **state,
             "intent": intent
         }
-    ##===================================================
-    def do_warmup(self):
-        # Force-load LLM
-        self.llm.invoke("Say OK")
-        # Build and cache graph
-        # graph = self.build_graph()
-        # # Optional: run a dummy pass
-        # graph.invoke({
-        #     "messages": [],
-        #     "intent": None,
-        #     "step": None
-        # },
-        # config={"thread_id": req.call_id}
-        # )
-        print("Warmup complete")
-        #return graph
     ##===================================================    
     def build_graph(self):
         graph = StateGraph(CallState)
@@ -210,6 +268,7 @@ class ChatModel:
         graph.add_node("question", self.question_node)
         graph.add_node("voicemail", self.voicemail_node)
         graph.add_node("meeting", self.meeting_node)
+        graph.add_node("meeting_confirm",self.meeting_confirm_node)
         graph.add_node("whatsapp_ask", self.whatsapp_node)        # ask for message
         graph.add_node("whatsapp_confirm", self.whatsapp_confirm_node)
         graph.add_node("lights", self.lights_node)
@@ -218,6 +277,8 @@ class ChatModel:
         
         graph.add_conditional_edges("whatsapp_ask", self.route_by_step)
         graph.add_conditional_edges("whatsapp_confirm", self.route_by_step)
+        graph.add_conditional_edges("meeting_ask", self.route_by_step)
+        graph.add_conditional_edges("meeting_confirm", self.route_by_step)
         
         graph.add_conditional_edges(
             "intent",
@@ -225,7 +286,7 @@ class ChatModel:
             {
                 "greeting": "greeting",
                 "question": "question",
-                "voicemail": "voicemail",
+                "voicemail": END,
                 "meeting": "meeting",
                 "whatsapp": "whatsapp_ask",
                 "lights": "lights",
