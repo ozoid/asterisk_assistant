@@ -1,28 +1,12 @@
-from typing import TypedDict, List, Literal
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage,HumanMessage
+from langchain_core.messages import  SystemMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate
 from dotenv import dotenv_values
-##===================================================
-Intent = [
-            "greeting",
-            "question",
-            "voicemail",
-            "meeting",
-            "whatsapp",
-            "lights",
-            "goodbye",
-        ]
-##===================================================
-class CallState(TypedDict):
-    messages: List[BaseMessage]     # History of messages
-    intent:str                      # the intent discovered initially
-    action: str | None              # the action to do when returned
-    step: str | None                # what step of the action are we at
-    reply: str | None               # the response to say to the caller
-    phone:str | None                # the phone number
-    name:str | None                 # the callers Name
+from models import CallState, MeetingState, Intent
+import json
+
 ##===================================================
 class ChatModel:
     def __init__(self, *args, **kwargs):
@@ -44,19 +28,28 @@ class ChatModel:
             - Be polite and concise and stay positive.
             - If the caller wants to end the call, say goodbye.
         """)
-        self.MEETING_PROMPT = """
-            This part of the conversation requires you to take details for a meeting.
-            The meeting can be an online Zoom or Microsoft Teams meeting or and in person meeting and requires the following information from the caller:
-            - the date and time of the meeting.
-            - if the meeting is online the callers email address.
-            - if the caller wants to be called back at the specified date and time, please ensure the phone number "{phone}" is correct with the caller.
-            - if the meeting is in person, a physical UK address including postcode.
+        self.MEETING_PROMPT = ChatPromptTemplate.from_messages([("system",
         """
+            This part of the conversation requires you to extract details for a meeting from the callers responses.
+            The meeting type can be a phone call, a Zoom/Teams online meeting or a physical in-person meeting.
+            If the meeting is online you do not need the physical address,
+              if the meeting is a physical in-person you do not need the email address,
+              if the meeting is a phone call, we already have the number from the telephone system.
+            Return JSON with any of:
+            [meeting_type, date, time, email_address, physical_address]
+
+            meeting_type can be one of: [zoom, teams, physical, phonecall]
+            Only include fields you are confident about."""), 
+            ("human", "{input}")
+        ])
 
         self.MEETING_CONFIRM_PROMPT = """
-            This part of the conversation requires you to confirm the details for a meeting.
-            Please ensure you have the date and time, the email address if online or the physical address if the meeting is in person or the phone number "{phone}" is correct.
+            Please now ensure you have all of the relevant meeting information so we can confirm the meeting details with the caller.
         """
+        #self.MEETING_PROMPT.extend([("system",self.MEETING_CONFIRM_PROMPT)])
+
+        
+        
         self.INTENT_PROMPT = """
             Classify the caller's intent.
 
@@ -73,6 +66,8 @@ class ChatModel:
             Return ONLY the intent word.
             Caller: "{text}"
         """
+
+        self.extract_chain = self.MEETING_PROMPT | self.llm
         
         self.do_warmup()
     ##===================================================
@@ -86,6 +81,10 @@ class ChatModel:
          },
          config={"thread_id": "00"}
         )
+        self.meeting_graph = self.build_meeting_graph()
+        self.meeting_graph.invoke({
+
+        })
         print("Warmup complete")
     ##===================================================
     def cleanResponse(self,response:AIMessage):
@@ -96,6 +95,104 @@ class ChatModel:
         if response.content[0]['text'] is not None:
             return response.content[0]['text']
         return ''
+    ##===================================================
+    def extract_info(self,state: MeetingState) -> MeetingState:
+        if not state.get("user_input"):
+            return state
+
+        response = self.extract_chain.invoke({
+            "input": state["user_input"]
+        })
+
+        try:
+            data = json.loads(response.content)
+        except Exception:
+            return state
+
+        for key in ["meeting_type", "date", "time", "email_addreess", "physical_addreess"]:
+            if key in data and not state.get(key):
+                state[key] = data[key]
+
+        return state
+    ##===================================================
+    def decide_next_step(self,state: MeetingState) -> str:
+        if not state.get("meeting_type"):
+            return "ask_type"
+        if not state.get("date"):
+            return "ask_date"
+        if not state.get("time"):
+            return "ask_time"
+        if not state.get("physical_address") and state.get("meeting_type") == "physical":
+            return "ask_physical"
+        if not state.get("email_address") and state.get("meeting_type") != "physical" and state.get("meeting_type") != "phonecall":
+            return "ask_email"
+        return "confirm"
+    ##===================================================
+    def ask_type(self,state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What type of meeting do you want, an online Zoom or Teams meeting or an in-person meeting?"
+        return state
+    
+    def ask_purpose(self,state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What is the purpose of the meeting?"
+        return state
+
+    def ask_date(state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What date should the meeting take place?"
+        return state
+
+    def ask_time(state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What time should the meeting start?"
+        return state
+
+    def ask_email(state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What is your email address?"
+        return state
+    
+    def ask_physical(state: MeetingState) -> MeetingState:
+        state["last_prompt"] = "What is the address you wish Steve to attend?"
+        return state
+    ##===================================================
+    def confirm_meeting(state: MeetingState) -> MeetingState:
+        summary = (
+            f"I will schedule a meeting of type {state['meeting_type']} "
+            f"on {state['date']} at {state['time']} "
+            "Is this correct?"
+        )
+
+        state["last_prompt"] = summary
+        state["complete"] = True
+        return state
+    ##===================================================
+    def build_meeting_graph(self):
+        graph = StateGraph(MeetingState)
+
+        graph.add_node("extract", self.extract_info)
+
+        graph.add_node("ask_type", self.ask_type)
+        graph.add_node("ask_date", self.ask_date)
+        graph.add_node("ask_time", self.ask_time)
+        graph.add_node("ask_email", self.ask_email)
+        graph.add_node("ask_physical", self.ask_physical)
+        graph.add_node("confirm", self.confirm_meeting)
+
+        graph.set_entry_point("extract")
+
+        graph.add_conditional_edges(
+            "extract",
+            self.decide_next_step,
+            {
+                "ask_type": "ask_type",
+                "ask_date": "ask_date",
+                "ask_time": "ask_time",
+                "ask_email": "ask_email",
+                "ask_physical": "ask_physical",
+                "confirm": "confirm"
+            }
+        )
+
+        return graph.compile()
+    ##===================================================
+    ##===================================================
     ##===================================================
     def greeting_node(self,state: CallState):
         print("node_greeting")
@@ -189,7 +286,7 @@ class ChatModel:
     ##===================================================
     def meeting_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([SystemMessage(content=self.SYSTEM_PROMPT)] + [SystemMessage(content=self.MEETING_PROMPT.format(phone=state.phone))] + state["messages"])
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
         reply = self.cleanResponse(response)
         return {
             **state,
@@ -201,7 +298,7 @@ class ChatModel:
     ##===================================================
     def meeting_confirm_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([SystemMessage(content=self.SYSTEM_PROMPT)] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state.phone))] + state["messages"])
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state.phone))] + state["messages"])
         reply = self.cleanResponse(response)
         return {
             **state,
@@ -308,6 +405,7 @@ class ChatModel:
         graph.add_edge("greeting", END)
         graph.add_edge("question", END)
         graph.add_edge("voicemail", END)
+        graph.add_edge("meeting_ask",END)
         graph.add_edge("meeting_confirm", END)
         graph.add_edge("whatsapp_confirm", END)
         graph.add_edge("lights", END)

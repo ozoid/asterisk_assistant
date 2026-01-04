@@ -1,5 +1,27 @@
+from typing import TypedDict, List, Literal,Optional
 from pydantic import BaseModel
 from enum import IntEnum
+from langchain_core.messages import BaseMessage
+##===================================================
+Intent = [
+            "greeting",
+            "question",
+            "voicemail",
+            "meeting",
+            "whatsapp",
+            "lights",
+            "goodbye",
+        ]
+
+##===================================================
+class CallState(TypedDict):
+    messages: List[BaseMessage]     # History of messages
+    intent:str                      # the intent discovered initially
+    action: str | None              # the action to do when returned
+    step: str | None                # what step of the action are we at
+    reply: str | None               # the response to say to the caller
+    phone:str | None                # the phone number
+    name:str | None                 # the callers Name
 ##===================================================
 class AIState(IntEnum):
     UNKNOWN     = 0
@@ -11,15 +33,27 @@ class AIState(IntEnum):
     ANYTHING_ELSE = 6
     END         = 99
 ##===================================================
-class ResultCode(IntEnum):
+class OperationState(IntEnum):
     UNKNOWN     = 0
-    WA_ASK      = 1
-    WA_CONFIRM  = 2
-    VOICEMAIL   = 3
-    MEETING_ASK = 4
-    MEETING_CONFIRM = 5
-    LIGHTS      = 6
+    INTENT      = 1
+    WA_ASK      = 2
+    WA_CONFIRM  = 3
+    VOICEMAIL   = 4
+    MEETING_ASK = 5
+    MEETING_CONFIRM = 6
+    LIGHTS      = 7
     HANGUP      = 99
+##===================================================
+class MeetingState(TypedDict):
+    call_id: str
+    user_input: Optional[str]
+    meeting_type: Optional[str]
+    date: Optional[str]
+    time: Optional[str]
+    email_address: Optional[str]
+    physical_address: Optional[str]
+    last_prompt: Optional[str]
+    complete: bool
 ##===================================================
 class ChatRequest(BaseModel):
     unique_id: str
@@ -31,12 +65,16 @@ class ChatRequest(BaseModel):
 ##===================================================
 class ChatResponse(BaseModel):
     reply: str
-    action: str | None = None
+    action: str | bool | None = None
     intent: str | None = None
     step: str | None = None
 ##===================================================  
+class CallInput(BaseModel):
+    call_id: str
+    user_input: str | None = None
+
 # ##===================================================
-class ActionResult(BaseModel):
-    prompt:str
-    result:ResultCode #= ResultCode.UNKNOWN
+class OperationResult(BaseModel):
+    prompt:str = ''
+    state:OperationState = OperationState.UNKNOWN
 ##===================================================
