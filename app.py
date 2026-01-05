@@ -1,7 +1,6 @@
 from fastapi import FastAPI #, BackgroundTasks
-from langchain_core.messages import HumanMessage
 from graph import ChatModel
-from models import ChatRequest, ChatResponse,CallInput
+from models import ChatRequest, ChatResponse
 import json
 import redis
 ##===================================================
@@ -28,12 +27,6 @@ def save_state(call_id,state):
 def save_meeting_state(call_id,state):
     jstate = json.dumps(state)
     return rdis.set(f"meeting_state_{call_id}",jstate)
-##==================================================
-def clear_state(call_id):
-    return rdis.set(f"chat_state_{call_id}","")
-##==================================================
-def clear_meeting_state(call_id):
-    return rdis.set(f"meeting_state_{call_id}","")
 ##==================================================
 @app.post("/meeting", response_model=ChatResponse)
 def meeting(input: ChatRequest):

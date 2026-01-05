@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 from asterisk.agi import AGI
 import time
+from datetime import datetime
 from vosk import Model, KaldiRecognizer
 import wave
 import threading
 import json
+import redis
 from gtts import gTTS
-from pydub import AudioSegment
+from pydub import AudioSegment, effects
 import requests
 from home_assistant import HomeAssistant
 from whatsapp import WhatsApp
@@ -25,6 +27,7 @@ class AIAnswer:
         self.result_lock = threading.Lock()
         self.operation_result:OperationResult = OperationResult(prompt='',state=OperationState.INTENT)
         self.executor = AsyncExecutor(max_workers=6)
+        self.rdis = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     ##===================================================
     def setResult(self,prompt:str,state:OperationState):
         with self.result_lock:
@@ -34,7 +37,13 @@ class AIAnswer:
     def getResult(self) -> OperationResult:
         with self.result_lock:
             return self.operation_result
-    ##===================================================
+    ##==================================================
+    def clear_state(self,call_id):
+        return self.rdis.set(f"chat_state_{call_id}","")
+    ##==================================================
+    def clear_meeting_state(self,call_id):
+        return self.rdis.set(f"meeting_state_{call_id}","")
+    ##==================================================
     def getCallerID(self):
         self.unique_id = self.agi.get_variable("UNIQUEID")
         self.call_id = self.agi.get_variable("CALLERID(num)")
@@ -60,7 +69,8 @@ class AIAnswer:
     def convertAudioIn(self,filename:str):
         sound = AudioSegment.from_file(filename)
         sound = sound.set_channels(1).set_frame_rate(16000)
-        sound.export(filename, format="wav")
+        normalisedsound = effects.normalize(sound)
+        normalisedsound.export(filename, format="wav")
     ##===================================================
     def convertAudioOut(self,filename:str,turn) -> str:
         wav_file = f"/tmp/ai_reply_{turn}.wav"
@@ -129,11 +139,11 @@ class AIAnswer:
         return True
     ##===================================================
     ##===================================================
-    def ha_toggle_light():
+    def ha_toggle_light(self):
         ha = HomeAssistant()
         ha.toggle_hallway_light()
     ##===================================================
-    def whatsapp_message(message:str):
+    def whatsapp_message(self,message:str):
         wa = WhatsApp()
         wa.post_whatsApp(message)
     ##===================================================
@@ -158,12 +168,15 @@ class AIAnswer:
             self.setResult(cresp.reply,OperationState.MEETING_ASK)
         elif cresp.action == "meeting" and cresp.step == "meeting_confirm":
             self.setResult(cresp.reply,OperationState.MEETING_CONFIRM)
+        elif cresp.action == "meeting" and cresp.step == "end":
+            self.setResult(cresp.reply,OperationState.HANGUP)
         elif cresp.action == "lights":
             self.setResult(cresp.reply,OperationState.LIGHTS)
         elif cresp.action == "whatsapp" and cresp.step == "collect_whatsapp_message":
             self.setResult(cresp.reply,OperationState.WA_ASK)
-        elif cresp.action == "whatsapp" and cresp.step != "collect_whatsapp_message":
+        elif cresp.action == "whatsapp" and cresp.step == "confirm_whatsapp_message":
             self.setResult(cresp.reply,OperationState.WA_CONFIRM)
+        
 
         self.agi.verbose(f"Action:{cresp.action} Step:{cresp.step} Operation:{self.getResult().state.name}",3)
     ##===================================================
@@ -178,6 +191,8 @@ class AIAnswer:
             return None
         elif operation.state == OperationState.HANGUP:
             self.agi.stream_file("custom/ai_bye")
+            self.clear_meeting_state()
+            self.clear_state()
             self.agi.hangup()
             self.ai_state = AIState.END
             return None
@@ -199,7 +214,7 @@ class AIAnswer:
             return None
         elif operation.state == OperationState.MEETING_CONFIRM:
             cresp.reply = operation.prompt
-            cresp.step = "meeting_confirm"
+            cresp.step = "end"
             self.playVoice(cresp.reply,self.unique_id)
             self.ai_state = AIState.START
             return None
@@ -209,12 +224,18 @@ class AIAnswer:
             self.ai_state = AIState.ANYTHING_ELSE
             return None
         elif operation.state == OperationState.WA_ASK:
+            cresp.reply = operation.prompt
             self.playVoice(cresp.reply,self.unique_id)
+            self.setResult(cresp.reply,OperationState.WA_CONFIRM)
             self.ai_state = AIState.START
             return "confirm_whatsapp_message"
         elif operation.state == OperationState.WA_CONFIRM:
-            self.executor.submit(self.whatsapp_message,cresp.reply, timeout=30)
+            #cresp.reply = operation.prompt
+            dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data = f"tel:{self.call_id} name:{self.call_name} DT:{dt}\n {cresp.reply}"
+            self.executor.submit(self.whatsapp_message, data, timeout=30)
             self.playVoice(cresp.reply,self.unique_id)
+            self.setResult('',OperationState.INTENT)
             self.ai_state = AIState.ANYTHING_ELSE
             return None
         self.agi.verbose("OPState not found",3)
@@ -280,6 +301,14 @@ class AIAnswer:
             elif self.ai_state == AIState.PROCESSING:
                 if operation.state == OperationState.MEETING_ASK or operation.state == OperationState.MEETING_CONFIRM:
                     self.executor.submit(self.generalAIPost,"meeting", text, next_step, callback=self.doResult, timeout=60)#, context=self)
+                elif operation.state == OperationState.WA_ASK:
+                    pass
+                elif operation.state == OperationState.WA_CONFIRM:
+                    cresponse.reply = "Thank you. I will send your message to Steve."
+                    cresponse.action == "whatsapp" 
+                    cresponse.step == "confirm_whatsapp_message"
+                    self.ai_state = AIState.RUN_ACTIONS
+                    continue
                 else:
                     self.executor.submit(self.generalAIPost,"chat", text, next_step, callback=self.doResult, timeout=60)#, context=self)
                 self.setResult('',OperationState.UNKNOWN)

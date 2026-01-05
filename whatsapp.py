@@ -1,6 +1,7 @@
 import os
 from dotenv import dotenv_values
 import requests
+import json
 ##===================================================
 class WhatsApp:
     def __init__(self, *args, **kwargs):
@@ -14,17 +15,16 @@ class WhatsApp:
         }
     ##===================================================
     def post_whatsApp(self,message):
-        
         wajson = { 
             "chatId": self.stevewa,
             "message": message 
         }
-        response = requests.post(
+        requests.post(
             self.WHATSAPP_URL, 
-            data=wajson,
+            data = json.dumps(wajson),
             headers=self.headers,
             timeout=5
-            )
-        return response.text.encode('utf8')
+        ).raise_for_status()
+        
     ##===================================================
 ##===================================================

@@ -1,4 +1,5 @@
 import requests
+import json
 from dotenv import dotenv_values
 ##===================================================
 class HomeAssistant:
@@ -19,8 +20,9 @@ class HomeAssistant:
         requests.post(
             f"{self.HA_URL}/api/services/light/{service}",
             headers=self.headers,
-            json=data,
-            timeout=5
+            data=json.dumps(data),
+            timeout=15
         ).raise_for_status()
+        
     ##===================================================
 ##===================================================    
