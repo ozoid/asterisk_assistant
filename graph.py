@@ -28,20 +28,21 @@ class ChatModel:
             - Be polite and concise and stay positive.
             - If the caller wants to end the call, say goodbye.
         """)
-        self.MEETING_PROMPT = ChatPromptTemplate.from_messages([("system",
-        """
+        self.MEETING_PROMPT = """
             This part of the conversation requires you to extract details for a meeting from the callers responses.
             The meeting type can be a phone call, a Zoom/Teams online meeting or a physical in-person meeting.
             If the meeting is online you do not need the physical address,
               if the meeting is a physical in-person you do not need the email address,
               if the meeting is a phone call, we already have the number from the telephone system.
-            Return JSON with any of:
+            Return a clean JSON serialized object with any of:
             [meeting_type, date, time, email_address, physical_address]
 
             meeting_type can be one of: [zoom, teams, physical, phonecall]
-            Only include fields you are confident about."""), 
+            Only include fields you are confident about."""
+        self.MEETINGWRAP = ChatPromptTemplate.from_messages([
+            ("system", self.MEETING_PROMPT),
             ("human", "{input}")
-        ])
+            ])
 
         self.MEETING_CONFIRM_PROMPT = """
             Please now ensure you have all of the relevant meeting information so we can confirm the meeting details with the caller.
@@ -67,7 +68,7 @@ class ChatModel:
             Caller: "{text}"
         """
 
-        self.extract_chain = self.MEETING_PROMPT | self.llm
+        self.extract_chain = self.MEETINGWRAP | self.llm
         
         self.do_warmup()
     ##===================================================
@@ -87,32 +88,38 @@ class ChatModel:
         })
         print("Warmup complete")
     ##===================================================
-    def cleanResponse(self,response:AIMessage):
+    def cleanResponse(self,response:AIMessage) ->str|None:
         if response.content is None:
-            return ''
+            return None
         if len(response.content) == 0:
-            return ''
+            return None
         if response.content[0]['text'] is not None:
-            return response.content[0]['text']
-        return ''
+            return response.content[0]['text'].replace("```json","").replace("```","")
+        return None
     ##===================================================
     def extract_info(self,state: MeetingState) -> MeetingState:
+        print("node_extract_info")
         if not state.get("user_input"):
             return state
 
         response = self.extract_chain.invoke({
             "input": state["user_input"]
         })
-
+        cleaned = self.cleanResponse(response)
+        print(cleaned)
+        if cleaned is None:
+            print("Exception=No Data")
+            return state
         try:
-            data = json.loads(response.content)
+            data = json.loads(self.cleanResponse(response))
         except Exception:
+            print("Exception=Extract_Info")
             return state
 
-        for key in ["meeting_type", "date", "time", "email_addreess", "physical_addreess"]:
+        for key in ["meeting_type", "date", "time", "email_address", "physical_address"]:
             if key in data and not state.get(key):
                 state[key] = data[key]
-
+        print(f"Extract State:{state}")
         return state
     ##===================================================
     def decide_next_step(self,state: MeetingState) -> str:
@@ -129,36 +136,45 @@ class ChatModel:
         return "confirm"
     ##===================================================
     def ask_type(self,state: MeetingState) -> MeetingState:
-        state["last_prompt"] = "What type of meeting do you want, an online Zoom or Teams meeting or an in-person meeting?"
+        print("node_ask_type")
+        state["last_prompt"] = "What type of meeting do you want, an online Zoom, Teams meeting or an in-person meeting?"
         return state
-    
+    ##===================================================
     def ask_purpose(self,state: MeetingState) -> MeetingState:
+        print("node_ask_purpose")
         state["last_prompt"] = "What is the purpose of the meeting?"
         return state
-
-    def ask_date(state: MeetingState) -> MeetingState:
+    ##===================================================
+    def ask_date(self,state: MeetingState) -> MeetingState:
+        print("node_ask_date")
         state["last_prompt"] = "What date should the meeting take place?"
         return state
-
-    def ask_time(state: MeetingState) -> MeetingState:
+    ##===================================================
+    def ask_time(self,state: MeetingState) -> MeetingState:
+        print("node_ask_time")
         state["last_prompt"] = "What time should the meeting start?"
         return state
-
-    def ask_email(state: MeetingState) -> MeetingState:
+    ##===================================================
+    def ask_email(self,state: MeetingState) -> MeetingState:
+        print("node_ask_email")
         state["last_prompt"] = "What is your email address?"
         return state
-    
-    def ask_physical(state: MeetingState) -> MeetingState:
+    ##===================================================
+    def ask_physical(self,state: MeetingState) -> MeetingState:
+        print("node_ask_physical")
         state["last_prompt"] = "What is the address you wish Steve to attend?"
         return state
     ##===================================================
-    def confirm_meeting(state: MeetingState) -> MeetingState:
+    def confirm_meeting(self,state: MeetingState) -> MeetingState:
+        print("node_confirm_meeting")
+        added = ''
+        if state.get("physical_address"):
+            added = f"in location {state['physical_address']}"
         summary = (
             f"I will schedule a meeting of type {state['meeting_type']} "
-            f"on {state['date']} at {state['time']} "
+            f"on {state['date']} at {state['time']} {added}"
             "Is this correct?"
         )
-
         state["last_prompt"] = summary
         state["complete"] = True
         return state
@@ -169,6 +185,7 @@ class ChatModel:
         graph.add_node("extract", self.extract_info)
 
         graph.add_node("ask_type", self.ask_type)
+        #graph.add_node("ask_purpose", self.ask_purpose)
         graph.add_node("ask_date", self.ask_date)
         graph.add_node("ask_time", self.ask_time)
         graph.add_node("ask_email", self.ask_email)
@@ -184,6 +201,7 @@ class ChatModel:
                 "ask_type": "ask_type",
                 "ask_date": "ask_date",
                 "ask_time": "ask_time",
+                #"ask_purpose":"ask_purpose",
                 "ask_email": "ask_email",
                 "ask_physical": "ask_physical",
                 "confirm": "confirm"
@@ -286,8 +304,9 @@ class ChatModel:
     ##===================================================
     def meeting_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
-        reply = self.cleanResponse(response)
+        #response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
+        #reply = self.cleanResponse(response)
+        reply = "When would you like the meeting to take place?"
         return {
             **state,
             "messages": state["messages"] + [SystemMessage(content=reply)],
@@ -311,13 +330,10 @@ class ChatModel:
     def route_by_step(self,state):
         step = state.get("step")
         if step == "collect_whatsapp_message":
-            return "whatsapp_ask"
+            return END
         if step == "confirm_whatsapp_message":
             return "whatsapp_confirm"
-        if step == "meeting_ask":
-            return "meeting_ask"
-        if step == "meeting_confirm":
-            return "meeting_confirm"
+
         return "intent"
     ##===================================================
     def route_by_intent(self,state):
@@ -334,9 +350,10 @@ class ChatModel:
     ##===================================================
     def intent_node(self,state: CallState):
         print("node_intent")
+        print(state)
         last_msg = ""
         if len(state["messages"]) >0:
-            last_msg = state["messages"][-1].content
+            last_msg = state["messages"][-1]
         else:
             return {
                 **state,
@@ -374,8 +391,8 @@ class ChatModel:
         
         graph.add_conditional_edges("whatsapp_ask", self.route_by_step)
         graph.add_conditional_edges("whatsapp_confirm", self.route_by_step)
-        graph.add_conditional_edges("meeting_ask", self.route_by_step)
-        graph.add_conditional_edges("meeting_confirm", self.route_by_step)
+        #graph.add_conditional_edges("meeting_ask", self.route_by_step)
+        #graph.add_conditional_edges("meeting_confirm", self.route_by_step)
         
         graph.add_conditional_edges(
             "intent",
@@ -407,6 +424,7 @@ class ChatModel:
         graph.add_edge("voicemail", END)
         graph.add_edge("meeting_ask",END)
         graph.add_edge("meeting_confirm", END)
+        graph.add_edge("whatsapp_ask", END)
         graph.add_edge("whatsapp_confirm", END)
         graph.add_edge("lights", END)
         graph.add_edge("goodbye", END)

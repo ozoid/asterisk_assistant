@@ -15,7 +15,7 @@ Intent = [
 
 ##===================================================
 class CallState(TypedDict):
-    messages: List[BaseMessage]     # History of messages
+    messages: List = []     # History of messages
     intent:str                      # the intent discovered initially
     action: str | None              # the action to do when returned
     step: str | None                # what step of the action are we at

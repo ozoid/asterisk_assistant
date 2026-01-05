@@ -95,7 +95,8 @@ class AIAnswer:
         self.convertAudioIn(filename)
         return self.stt(filename)
     ##===================================================
-    def intentAI(self,text:str,step:str|None = None) -> ChatResponse:
+    def generalAIPost(self,endpoint:str,text:str,step:str|None = None) -> ChatResponse:
+        self.agi.verbose(f"{endpoint}AI",3)
         if step is None:
             step = ''
         payload = {
@@ -106,7 +107,7 @@ class AIAnswer:
             "step": step,
         }
         cresp = ChatResponse(reply='')
-        resp = requests.post("http://127.0.0.1:8000/chat",  json=payload, timeout=50)
+        resp = requests.post(f"http://127.0.0.1:8000/{endpoint}",  json=payload, timeout=50)
         if resp.status_code !=200:
             cresp.reply = f"Invalid Request/Response from AI {resp.status_code}"
             cresp.action = "error"
@@ -118,25 +119,6 @@ class AIAnswer:
         cresp.step = jval["step"]
         return cresp
     ##===================================================
-    def meetingAI(self,text:str) -> ChatResponse:
-        self.agi.verbose("meetingAI",3)
-        payload = {
-            "unique_id": self.unique_id,
-            "call_id": self.call_id,
-            "call_name": self.call_name,
-            "text": text,
-        }
-        cresp = ChatResponse(reply='')
-        resp = requests.post("http://127.0.0.1:8000/meeting", json=payload, timeout=50)
-        if resp.status_code !=200:
-            reply = f"Invalid Request/Response from Meeting AI {resp.status_code}"
-            cresp.reply = reply
-            cresp.action = "error"
-            return cresp
-        jval = resp.json()
-        cresp.reply = jval["reply"]
-        cresp.action = jval["action"]
-        return cresp
     ##===================================================
     def playVoice(self,text,uniqueid)->bool:
         if text is None or text == "":
@@ -160,6 +142,7 @@ class AIAnswer:
         '''Determine What action to take and set the ActionResult value,
            Can be triggered from the FastAPI callback (separate thread) or manually through quickFind.
         '''
+#        self.agi.verbose(f"Start Action:{cresp.action} Step:{cresp.step} Operation:{self.getResult().state.name}",3)
         if cresp.action == None or cresp.action == "":
             self.agi.verbose(f"NOACTION",3)
             self.setResult(cresp.reply, OperationState.UNKNOWN)
@@ -171,7 +154,7 @@ class AIAnswer:
             self.setResult(cresp.reply,OperationState.HANGUP)
         elif cresp.action == "voicemail":
             self.setResult(cresp.reply,OperationState.VOICEMAIL)
-        elif cresp.action == "meeting" and cresp.step != "meeting_confirm":
+        elif cresp.action == "meeting" and cresp.step == "meeting_ask":
             self.setResult(cresp.reply,OperationState.MEETING_ASK)
         elif cresp.action == "meeting" and cresp.step == "meeting_confirm":
             self.setResult(cresp.reply,OperationState.MEETING_CONFIRM)
@@ -181,7 +164,7 @@ class AIAnswer:
             self.setResult(cresp.reply,OperationState.WA_ASK)
         elif cresp.action == "whatsapp" and cresp.step != "collect_whatsapp_message":
             self.setResult(cresp.reply,OperationState.WA_CONFIRM)
-        
+
         self.agi.verbose(f"Action:{cresp.action} Step:{cresp.step} Operation:{self.getResult().state.name}",3)
     ##===================================================
     def doActions(self,cresp:ChatResponse)->str|None:
@@ -206,13 +189,17 @@ class AIAnswer:
             self.ai_state = AIState.END
             return None
         elif operation.state == OperationState.MEETING_ASK:
+            #cresp.step = "meeting_confirm"
+            cresp.reply = operation.prompt
             self.agi.verbose("meetingAsk",3)
             self.agi.verbose(cresp.reply,3)
             if self.playVoice(cresp.reply,self.unique_id):
                 self.agi.verbose(f"played:{cresp.reply}",3)
             self.ai_state = AIState.START
-            return "meeting_confirm"
+            return None
         elif operation.state == OperationState.MEETING_CONFIRM:
+            cresp.reply = operation.prompt
+            cresp.step = "meeting_confirm"
             self.playVoice(cresp.reply,self.unique_id)
             self.ai_state = AIState.START
             return None
@@ -234,7 +221,7 @@ class AIAnswer:
         #self.ai_state = AIState.ANYTHING_ELSE
         return None
     ##===================================================
-    def quickFind(self,text):
+    def quickFind(self,text,cresp:ChatResponse):
         '''Bypass AI and search the stt result for keywords'''
         def _quickFind(text):
             vmkeys = ["voicemail","voice mail"]
@@ -242,30 +229,30 @@ class AIAnswer:
             likeys = ["lights"]
             zmkeys = ["zoom", "teams", "meeting", "call back",]
             vm = [kw for kw in vmkeys if (kw in text.lower())]
-            if len(vm)>0: return "voicemail"
+            if len(vm)>0: return ("voicemail","","Connecting to Voicemail")
             wa = [kw for kw in wakeys if (kw in text.lower())]
-            if len(wa)>0: return "whatsapp"
+            if len(wa)>0: return ("whatsapp","collect_whatsapp_message","What is the message you would like to send?")
             li = [kw for kw in likeys if (kw in text.lower())]
-            if len(li)>0: return "lights"
+            if len(li)>0: return ("lights","","Are you sure you want to toggle the hallway light?")
             li = [kw for kw in zmkeys if (kw in text.lower())]
-            if len(li)>0: return "meeting"
-            return None
+            if len(li)>0: return ("meeting","meeting_ask","What date and time would you like the meeting?")
+            return (None,None,None)
         #-------------------------------------
-        found = _quickFind(text)    #TODO: only if in intent mode..
-        step = None
+        
+        (found,step,reply) = _quickFind(text)    #TODO: only if in intent mode..
         if found is not None: 
             self.agi.verbose(f"QuickFind:{found}",3)
             if found == "whatsapp":
                 step = "collect_whatsapp_message"
-            return (found,step)
-        return (None,None)
+            return (found,step,reply)
+        return None
     ##===================================================
     def run(self):
         '''Run the call answering loop max_turns to avoid infinite looping issues or people fooling around.'''
         turn = 0
         text = ''
         next_step = None
-        cresp = ChatResponse(reply='')
+        cresponse:ChatResponse = ChatResponse(reply='')
         while turn < self.max_turns:
             operation = self.getResult()
             self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.state.name} =-",3)
@@ -277,22 +264,25 @@ class AIAnswer:
             elif self.ai_state == AIState.RECORD:
                 text = self.recordAndConvert(turn)
                 self.agi.verbose(f"{text}")
-                (found,step) = self.quickFind(text)
-                if found is not None:       
-                    cresp.action = found
-                    cresp.step = step
-                    self.doResult(cresp,None,None)
-                    self.ai_state = AIState.RUN_ACTIONS
-                    turn += 1
-                    continue
+                # if operation.state == OperationState.INTENT:
+                #     (found,step,reply) = self.quickFind(text,cresponse)
+                #     if found is not None:       
+                #         cresponse.action = found
+                #         cresponse.step = step
+                #         cresponse.reply = reply
+                #         self.doResult(cresponse,None,None)
+                #         self.ai_state = AIState.RUN_ACTIONS
+                #         turn += 1
+                #         continue
                 turn += 1
                 self.ai_state = AIState.PROCESSING
             #--------------------------------------
             elif self.ai_state == AIState.PROCESSING:
                 if operation.state == OperationState.MEETING_ASK or operation.state == OperationState.MEETING_CONFIRM:
-                    self.executor.submit(self.meetingAI, text, callback=self.doResult, timeout=60)#, context=self)
+                    self.executor.submit(self.generalAIPost,"meeting", text, next_step, callback=self.doResult, timeout=60)#, context=self)
                 else:
-                    self.executor.submit(self.intentAI, text, next_step, callback=self.doResult, timeout=60)#, context=self)
+                    self.executor.submit(self.generalAIPost,"chat", text, next_step, callback=self.doResult, timeout=60)#, context=self)
+                self.setResult('',OperationState.UNKNOWN)
                 self.playVoice("Please wait whilst I deal with your request.",self.unique_id)
                 self.ai_state = AIState.WAIT_RESULT
             #--------------------------------------
@@ -304,7 +294,7 @@ class AIAnswer:
             #--------------------------------------
             elif self.ai_state == AIState.RUN_ACTIONS:
                 turn += 1
-                next_step = self.doActions(cresp)
+                next_step = self.doActions(cresponse)
             #--------------------------------------
             elif self.ai_state == AIState.UNKNOWN:
                 self.playVoice("I am sorry, I have not been able to deal with your request. Please try again.",self.unique_id)
