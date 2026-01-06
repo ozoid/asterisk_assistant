@@ -2,6 +2,7 @@
 
 An AI assistant for your telephone line.
 
+Technologies used:
 - FreePBX (Asterisk 22.6.0)
 - FastAPI
 - Vosk STT
@@ -11,6 +12,19 @@ An AI assistant for your telephone line.
 - Redis
 - Green-API (WhatsApp)
 - Home Assistant
+
+The AI will decide on what the caller wants and take one of the following actions:
+- Forward call to Voicemail
+- Forward call to Mobile Phone
+- Take a WhatsApp Message and send to a number
+- Take and schedule a meeting appointment
+- Take a message and send to email
+- Respond to a greeting
+- Toggle the Light Switch via Home Assistant
+- Respond to any other question
+
+## Meeting Appointments:
+The AI will request a date, time, meeting type (online, physical), email address and physical address through a series of questions. Once all the data is gathered, the final details are read back to the caller.
 
 ## Installation
 1. Copy into /var/lib/asterisk/agi-bin/ai
