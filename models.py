@@ -8,6 +8,7 @@ Intent = [
             "question",
             "voicemail",
             "meeting",
+            "mobile",
             "whatsapp",
             "lights",
             "goodbye",
@@ -23,7 +24,7 @@ class CallState(TypedDict):
     phone:str | None                # the phone number
     name:str | None                 # the callers Name
 ##===================================================
-class AIState(IntEnum):
+class AIMode(IntEnum):
     UNKNOWN     = 0
     START       = 1
     RECORD      = 2
@@ -33,7 +34,7 @@ class AIState(IntEnum):
     ANYTHING_ELSE = 6
     END         = 99
 ##===================================================
-class OperationState(IntEnum):
+class OperationMode(IntEnum):
     UNKNOWN     = 0
     INTENT      = 1
     WA_ASK      = 2
@@ -42,6 +43,7 @@ class OperationState(IntEnum):
     MEETING_ASK = 5
     MEETING_CONFIRM = 6
     LIGHTS      = 7
+    MOBILE      = 8
     HANGUP      = 99
 ##===================================================
 class MeetingState(TypedDict):
@@ -68,13 +70,8 @@ class ChatResponse(BaseModel):
     action: str | bool | None = None
     intent: str | None = None
     step: str | None = None
-##===================================================  
-class CallInput(BaseModel):
-    call_id: str
-    user_input: str | None = None
-
-# ##===================================================
+##===================================================
 class OperationResult(BaseModel):
     prompt:str = ''
-    state:OperationState = OperationState.UNKNOWN
+    state:OperationMode = OperationMode.UNKNOWN
 ##===================================================

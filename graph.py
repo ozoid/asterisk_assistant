@@ -59,6 +59,7 @@ class ChatModel:
             - question
             - voicemail
             - meeting
+            - mobile
             - whatsapp
             - lights
             - goodbye
@@ -249,13 +250,24 @@ class ChatModel:
     ##===================================================
     def voicemail_node(self,state: CallState):
         print("node_voicemail")
-        reply = "Please leave your message after the tone."
+        reply = "Forwarding to Voicemail."
         return {
             **state,
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
             "action": "voicemail"
+        }
+    ##===================================================
+    def mobile_node(self,state: CallState):
+        print("node_mobile")
+        reply = "Forwarding to Mobile Phone."
+        return {
+            **state,
+            "step": None,
+            "messages": state["messages"] + [SystemMessage(content=reply)],
+            "reply": reply,
+            "action": "mobile"
         }
     ##===================================================
     def goodbye_node(self,state: CallState):
@@ -336,17 +348,6 @@ class ChatModel:
 
         return "intent"
     ##===================================================
-    def route_by_intent(self,state):
-        intent = state.get("intent")
-
-        if intent == "light_on":
-            return "light_on_node"
-        if intent == "light_off":
-            return "light_off_node"
-        if intent == "greeting":
-            return "greeting_node"
-
-        return "question_node"  # fallback
     ##===================================================
     def intent_node(self,state: CallState):
         print("node_intent")
@@ -381,6 +382,7 @@ class ChatModel:
         graph.add_node("question", self.question_node)
         graph.add_node("unknown", self.unknown_node)
         graph.add_node("voicemail", self.voicemail_node)
+        graph.add_node("mobile", self.mobile_node)
         graph.add_node("meeting_ask", self.meeting_node)
         graph.add_node("meeting_confirm",self.meeting_confirm_node)
         graph.add_node("whatsapp_ask", self.whatsapp_node)        # ask for message
@@ -401,6 +403,7 @@ class ChatModel:
                 "greeting": "greeting",
                 "question": "question",
                 "voicemail": END,
+                "mobile": END,
                 "meeting": "meeting_ask",
                 "whatsapp": "whatsapp_ask",
                 "lights": "lights",
@@ -409,19 +412,10 @@ class ChatModel:
             }
         )
         
-        # graph.add_conditional_edges(
-        #    "intent_node",
-        #     route_by_intent,
-        #     {
-        #         "lights": "lights",
-        #         "greeting_node": "greeting_node",
-        #         "question_node": "question_node",
-        #     }
-        # )
-
         graph.add_edge("greeting", END)
         graph.add_edge("question", END)
         graph.add_edge("voicemail", END)
+        graph.add_edge("mobile", END)
         graph.add_edge("meeting_ask",END)
         graph.add_edge("meeting_confirm", END)
         graph.add_edge("whatsapp_ask", END)
@@ -429,8 +423,5 @@ class ChatModel:
         graph.add_edge("lights", END)
         graph.add_edge("goodbye", END)
         
-        # # All paths end
-        # for node in ["greeting", "question", "voicemail","meeting","whatsapp","lights", "goodbye"]:
-        #     graph.add_edge(node, END)
         memory = InMemorySaver()
         return graph.compile(checkpointer=memory)

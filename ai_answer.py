@@ -14,6 +14,7 @@ from home_assistant import HomeAssistant
 from whatsapp import WhatsApp
 from models import *
 from async_executor import AsyncExecutor
+from dotenv import dotenv_values
 ##===================================================
 class AIAnswer:
     def __init__(self, *args, **kwargs):
@@ -21,15 +22,16 @@ class AIAnswer:
         self.call_id   = "unknown"
         self.call_name = "unknown"
         self.unique_id = "unknown"
+        self.config = dotenv_values(".env")
         self.voskmodel = Model("/opt/vosk-model/vosk-model-small-en-us-0.15")
         self.max_turns = 60
-        self.ai_state:AIState = AIState.START
+        self.ai_state:AIMode = AIMode.START
         self.result_lock = threading.Lock()
-        self.operation_result:OperationResult = OperationResult(prompt='',state=OperationState.INTENT)
+        self.operation_result:OperationResult = OperationResult(prompt='',state=OperationMode.INTENT)
         self.executor = AsyncExecutor(max_workers=6)
         self.rdis = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     ##===================================================
-    def setResult(self,prompt:str,state:OperationState):
+    def setResult(self,prompt:str,state:OperationMode):
         with self.result_lock:
             self.operation_result.prompt = prompt
             self.operation_result.state = state
@@ -138,45 +140,81 @@ class AIAnswer:
         self.agi.stream_file(wav_file,sample_offset=1)
         return True
     ##===================================================
+    def actionHangUp(self):
+        self.agi.stream_file("custom/ai_bye")
+        self.clear_meeting_state()
+        self.clear_state()
+        self.agi.hangup()
     ##===================================================
-    def ha_toggle_light(self):
-        ha = HomeAssistant()
-        ha.toggle_hallway_light()
+    def actionVoicemail(self):
+        mailbox = "1000"
+        self.agi.execute(f"EXEC Voicemail {mailbox}@default")
+        self.agi.stream_file("custom/ai_bye")
+        self.agi.hangup()
     ##===================================================
-    def whatsapp_message(self,message:str):
-        wa = WhatsApp()
-        wa.post_whatsApp(message)
+    def actionMobile(self):
+        destination = self.config["MOBILE"]
+        self.agi.execute(f"EXEC Dial PJSIP/{destination}")
+        self.agi.stream_file("custom/ai_bye")
+        self.agi.hangup()
+    ##===================================================
+    def actionMeetingAsk(self,prompt:str):
+        self.agi.verbose("meetingAsk",3)
+        self.agi.verbose(prompt,3)
+        if self.playVoice(prompt,self.unique_id):
+            self.agi.verbose(f"played:{prompt}",3)
+    ##===================================================
+    def actionMeetingConfirm(self,prompt:str):
+        self.playVoice(prompt,self.unique_id)
+    ##===================================================
+    def actionLights(self):
+        def toggleLight():
+            ha = HomeAssistant()
+            ha.toggle_hallway_light()
+        self.executor.submit(toggleLight, timeout=30)
+        self.playVoice("I have toggled the hallway light.",self.unique_id)
+    ##===================================================
+    def actionWAAsk(self,prompt:str):
+        self.playVoice(prompt,self.unique_id)
+        self.setResult(prompt,OperationMode.WA_CONFIRM)
+    ##===================================================
+    def actionWAConfirm(self, prompt):
+        def whatsappMessage(message:str):
+            wa = WhatsApp()
+            wa.post_whatsApp(message)
+        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data = f"tel:{self.call_id} name:{self.call_name} DT:{dt}\n {prompt}"
+        self.executor.submit(whatsappMessage, data, timeout=30)
+        self.playVoice(prompt,self.unique_id)
+        self.setResult('',OperationMode.INTENT)
     ##===================================================
     ## Possible Worker thread!
     def doResult(self,cresp:ChatResponse,err,ctx):
         '''Determine What action to take and set the ActionResult value,
            Can be triggered from the FastAPI callback (separate thread) or manually through quickFind.
         '''
-#        self.agi.verbose(f"Start Action:{cresp.action} Step:{cresp.step} Operation:{self.getResult().state.name}",3)
         if cresp.action == None or cresp.action == "":
-            self.agi.verbose(f"NOACTION",3)
-            self.setResult(cresp.reply, OperationState.UNKNOWN)
-            return
-        
-        if cresp.action == "intent":
-            self.setResult(cresp.reply,OperationState.INTENT)
+            self.setResult(cresp.reply, OperationMode.UNKNOWN)
+        elif cresp.action == "intent":
+            self.setResult(cresp.reply,OperationMode.INTENT)
         elif cresp.action == "hangup":
-            self.setResult(cresp.reply,OperationState.HANGUP)
+            self.setResult(cresp.reply,OperationMode.HANGUP)
         elif cresp.action == "voicemail":
-            self.setResult(cresp.reply,OperationState.VOICEMAIL)
+            self.setResult(cresp.reply,OperationMode.VOICEMAIL)
+        elif cresp.action == "mobile":
+            self.setResult(cresp.reply,OperationMode.MOBILE)
         elif cresp.action == "meeting" and cresp.step == "meeting_ask":
-            self.setResult(cresp.reply,OperationState.MEETING_ASK)
+            self.setResult(cresp.reply,OperationMode.MEETING_ASK)
         elif cresp.action == "meeting" and cresp.step == "meeting_confirm":
-            self.setResult(cresp.reply,OperationState.MEETING_CONFIRM)
+            self.setResult(cresp.reply,OperationMode.MEETING_CONFIRM)
         elif cresp.action == "meeting" and cresp.step == "end":
-            self.setResult(cresp.reply,OperationState.HANGUP)
+            self.setResult(cresp.reply,OperationMode.HANGUP)
         elif cresp.action == "lights":
-            self.setResult(cresp.reply,OperationState.LIGHTS)
+            self.setResult(cresp.reply,OperationMode.LIGHTS)
         elif cresp.action == "whatsapp" and cresp.step == "collect_whatsapp_message":
-            self.setResult(cresp.reply,OperationState.WA_ASK)
+            self.setResult(cresp.reply,OperationMode.WA_ASK)
         elif cresp.action == "whatsapp" and cresp.step == "confirm_whatsapp_message":
-            self.setResult(cresp.reply,OperationState.WA_CONFIRM)
-        
+            self.setResult(cresp.reply,OperationMode.WA_CONFIRM)
 
         self.agi.verbose(f"Action:{cresp.action} Step:{cresp.step} Operation:{self.getResult().state.name}",3)
     ##===================================================
@@ -185,58 +223,41 @@ class AIAnswer:
         operation:OperationResult = self.getResult()
         self.agi.verbose(f"Do Action:{operation.state.name}",3)
 
-        if operation.state == OperationState.INTENT:
+        if operation.state == OperationMode.INTENT:
             self.playVoice(f"Operation:Intent.",self.unique_id)
-            self.ai_state = AIState.START
+            self.ai_state = AIMode.START
             return None
-        elif operation.state == OperationState.HANGUP:
-            self.agi.stream_file("custom/ai_bye")
-            self.clear_meeting_state()
-            self.clear_state()
-            self.agi.hangup()
-            self.ai_state = AIState.END
+        elif operation.state == OperationMode.HANGUP:
+            self.actionHangUp()
+            self.ai_state = AIMode.END
             return None
-        elif operation.state == OperationState.VOICEMAIL:
-            mailbox = "1000"
-            self.agi.execute(f"EXEC Voicemail {mailbox}@default")
-            self.agi.stream_file("custom/ai_bye")
-            self.agi.hangup()
-            self.ai_state = AIState.END
+        elif operation.state == OperationMode.VOICEMAIL:
+            self.actionVoicemail()
+            self.ai_state = AIMode.END
             return None
-        elif operation.state == OperationState.MEETING_ASK:
-            #cresp.step = "meeting_confirm"
-            cresp.reply = operation.prompt
-            self.agi.verbose("meetingAsk",3)
-            self.agi.verbose(cresp.reply,3)
-            if self.playVoice(cresp.reply,self.unique_id):
-                self.agi.verbose(f"played:{cresp.reply}",3)
-            self.ai_state = AIState.START
+        elif operation.state == OperationMode.MOBILE:
+            self.actionMobile()
+            self.ai_state = AIMode.END
             return None
-        elif operation.state == OperationState.MEETING_CONFIRM:
-            cresp.reply = operation.prompt
-            cresp.step = "end"
-            self.playVoice(cresp.reply,self.unique_id)
-            self.ai_state = AIState.START
+        elif operation.state == OperationMode.MEETING_ASK:
+            self.actionMeetingAsk(operation.prompt)
+            self.ai_state = AIMode.START
             return None
-        elif operation.state == OperationState.LIGHTS:
-            self.executor.submit(self.ha_toggle_light, timeout=30)
-            self.playVoice("I have toggled the hallway light.",self.unique_id)
-            self.ai_state = AIState.ANYTHING_ELSE
+        elif operation.state == OperationMode.MEETING_CONFIRM:
+            self.actionMeetingConfirm(operation.prompt)
+            self.ai_state = AIMode.START
             return None
-        elif operation.state == OperationState.WA_ASK:
-            cresp.reply = operation.prompt
-            self.playVoice(cresp.reply,self.unique_id)
-            self.setResult(cresp.reply,OperationState.WA_CONFIRM)
-            self.ai_state = AIState.START
+        elif operation.state == OperationMode.LIGHTS:
+            self.actionLights()
+            self.ai_state = AIMode.ANYTHING_ELSE
+            return None
+        elif operation.state == OperationMode.WA_ASK:
+            self.actionWAAsk(operation.prompt)
+            self.ai_state = AIMode.START
             return "confirm_whatsapp_message"
-        elif operation.state == OperationState.WA_CONFIRM:
-            #cresp.reply = operation.prompt
-            dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            data = f"tel:{self.call_id} name:{self.call_name} DT:{dt}\n {cresp.reply}"
-            self.executor.submit(self.whatsapp_message, data, timeout=30)
-            self.playVoice(cresp.reply,self.unique_id)
-            self.setResult('',OperationState.INTENT)
-            self.ai_state = AIState.ANYTHING_ELSE
+        elif operation.state == OperationMode.WA_CONFIRM:
+            self.actionWAConfirm(operation.prompt)
+            self.ai_state = AIMode.ANYTHING_ELSE
             return None
         self.agi.verbose("OPState not found",3)
         #self.ai_state = AIState.ANYTHING_ELSE
@@ -276,13 +297,13 @@ class AIAnswer:
         cresponse:ChatResponse = ChatResponse(reply='')
         while turn < self.max_turns:
             operation = self.getResult()
-            self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.state.name} =-",3)
+            #self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.state.name} =-",3)
             #--------------------------------------
-            if self.ai_state == AIState.START:
+            if self.ai_state == AIMode.START:
                 turn += 1
-                self.ai_state = AIState.RECORD
+                self.ai_state = AIMode.RECORD
             #--------------------------------------
-            elif self.ai_state == AIState.RECORD:
+            elif self.ai_state == AIMode.RECORD:
                 text = self.recordAndConvert(turn)
                 self.agi.verbose(f"{text}")
                 # if operation.state == OperationState.INTENT:
@@ -296,46 +317,46 @@ class AIAnswer:
                 #         turn += 1
                 #         continue
                 turn += 1
-                self.ai_state = AIState.PROCESSING
+                self.ai_state = AIMode.PROCESSING
             #--------------------------------------
-            elif self.ai_state == AIState.PROCESSING:
-                if operation.state == OperationState.MEETING_ASK or operation.state == OperationState.MEETING_CONFIRM:
+            elif self.ai_state == AIMode.PROCESSING:
+                if operation.state == OperationMode.MEETING_ASK or operation.state == OperationMode.MEETING_CONFIRM:
                     self.executor.submit(self.generalAIPost,"meeting", text, next_step, callback=self.doResult, timeout=60)#, context=self)
-                elif operation.state == OperationState.WA_ASK:
+                elif operation.state == OperationMode.WA_ASK:
                     pass
-                elif operation.state == OperationState.WA_CONFIRM:
+                elif operation.state == OperationMode.WA_CONFIRM:
                     cresponse.reply = "Thank you. I will send your message to Steve."
                     cresponse.action == "whatsapp" 
                     cresponse.step == "confirm_whatsapp_message"
-                    self.ai_state = AIState.RUN_ACTIONS
+                    self.ai_state = AIMode.RUN_ACTIONS
                     continue
                 else:
                     self.executor.submit(self.generalAIPost,"chat", text, next_step, callback=self.doResult, timeout=60)#, context=self)
-                self.setResult('',OperationState.UNKNOWN)
+                self.setResult('',OperationMode.UNKNOWN)
                 self.playVoice("Please wait whilst I deal with your request.",self.unique_id)
-                self.ai_state = AIState.WAIT_RESULT
+                self.ai_state = AIMode.WAIT_RESULT
             #--------------------------------------
-            elif self.ai_state == AIState.WAIT_RESULT:
-                if operation.state != OperationState.UNKNOWN:
-                    self.ai_state = AIState.RUN_ACTIONS
+            elif self.ai_state == AIMode.WAIT_RESULT:
+                if operation.state != OperationMode.UNKNOWN:
+                    self.ai_state = AIMode.RUN_ACTIONS
                 
                 turn += 1
             #--------------------------------------
-            elif self.ai_state == AIState.RUN_ACTIONS:
+            elif self.ai_state == AIMode.RUN_ACTIONS:
                 turn += 1
                 next_step = self.doActions(cresponse)
             #--------------------------------------
-            elif self.ai_state == AIState.UNKNOWN:
+            elif self.ai_state == AIMode.UNKNOWN:
                 self.playVoice("I am sorry, I have not been able to deal with your request. Please try again.",self.unique_id)
                 turn = 1
-                self.ai_state = AIState.START
+                self.ai_state = AIMode.START
             #--------------------------------------
-            elif self.ai_state == AIState.ANYTHING_ELSE:
+            elif self.ai_state == AIMode.ANYTHING_ELSE:
                 self.playVoice("Can I help with anything else?",self.unique_id)
                 turn += 1
-                self.ai_state = AIState.START
+                self.ai_state = AIMode.START
             #--------------------------------------
-            elif self.ai_state == AIState.END:
+            elif self.ai_state == AIMode.END:
                 break
             #--------------------------------------
             time.sleep(0.5)

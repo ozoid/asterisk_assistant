@@ -41,7 +41,7 @@ def meeting(input: ChatRequest):
     if end_step:
         step="meeting_confirm"
     cr = ChatResponse(
-        reply=new_state.get("last_prompt"),
+        reply=new_state.get("last_prompt",""),
         action='meeting',
         intent="meeting",
         step=step,
@@ -59,10 +59,10 @@ def chat(input: ChatRequest):
     result = graph_app.graph.invoke(state,config={"thread_id": input.call_id})
     save_state(input.call_id,state)
     cr = ChatResponse(
-        reply=result.get("reply"),
-        action=result.get("action"),
-        intent=result.get("intent"),
-        step=result.get("step"),
+        reply=result.get("reply",""),
+        action=result.get("action","unknown"),
+        intent=result.get("intent","intent"),
+        step=result.get("step",""),
     )
     print(cr)
     return cr
