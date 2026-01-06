@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 from asterisk.agi import AGI
 import time
 from datetime import datetime
@@ -75,8 +76,13 @@ class AIAnswer:
         normalisedsound.export(filename, format="wav")
     ##===================================================
     def convertAudioOut(self,filename:str,turn) -> str:
-        wav_file = f"/tmp/ai_reply_{turn}.wav"
-        AudioSegment.from_mp3(filename).export(wav_file, format="wav",parameters=["-ar", "8000","-ac","1"])
+        wav_file = f"/tmp/ai_reply_{turn}_{time.time_ns()}.wav"
+        audio = AudioSegment.from_mp3(filename)
+        audio = audio.set_frame_rate(8000).set_channels(1)
+        audio = AudioSegment.silent(20) + audio + AudioSegment.silent(20)
+        audio.export(wav_file, format="wav", codec="pcm_mulaw", parameters=["-ar", "8000","-ac","1"])
+        with open(wav_file, "rb") as f:
+            os.fsync(f.fileno())
         return wav_file.replace(".wav","")
     ##===================================================
     def stt(self,filename:str) -> str:
@@ -133,11 +139,11 @@ class AIAnswer:
     ##===================================================
     ##===================================================
     def playVoice(self,text,uniqueid)->bool:
-        if text is None or text == "":
+        if not text:
             return False
         tts_file = self.tts(text)
         wav_file = self.convertAudioOut(tts_file,uniqueid)
-        self.agi.stream_file(wav_file,sample_offset=1)
+        self.agi.stream_file(wav_file)
         return True
     ##===================================================
     def actionHangUp(self):
@@ -153,7 +159,7 @@ class AIAnswer:
         self.agi.hangup()
     ##===================================================
     def actionMobile(self):
-        destination = self.config["MOBILE"]
+        destination = self.config["MOBILE_NUM"]
         self.agi.execute(f"EXEC Dial PJSIP/{destination}")
         self.agi.stream_file("custom/ai_bye")
         self.agi.hangup()

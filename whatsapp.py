@@ -8,7 +8,7 @@ class WhatsApp:
         config = dotenv_values(".env")
         watoken = config['WA_TOKEN']
         wainstance = config['WA_INSTANCE']
-        self.stevewa = config['WA_STEVE']
+        self.stevewa = config['WA_MOBILE']
         self.WHATSAPP_URL = f"https://7107.api.green-api.com/waInstance{wainstance}/sendMessage/{watoken}" 
         self.headers = {
             "Content-Type": "application/json",

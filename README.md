@@ -40,10 +40,18 @@ The AI will request a date, time, meeting type (online, physical), email address
 ```
 4. Reload your Dial Plans: asterisk -rx "dialplan reload"
 
-5. Run the app.py (FastAPI) with uvicorn in a separate process (or separate machine): 
+5. ensure you have the following variables set in a local .env file:
+
+GEMINI_API_KEY - for the llm
+HA_URL, HA_TOKEN - for HomeAssistant
+WA_TOKEN, WA_MOBILE, WA_INSTANCE - for WhatsApp
+MOBILE_NUM - for forward to mobile
+SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASS - for email and meetings
+
+6. Run the app.py (FastAPI) with uvicorn in a separate process (or separate machine): 
 `uvicorn app:app --host 127.0.0.1 --port 8000`
 
-6. Use your Custom Destination in an IVR or elsewhere.
+7. Use your Custom Destination in an IVR or elsewhere.
 
 
 ## Next Steps
