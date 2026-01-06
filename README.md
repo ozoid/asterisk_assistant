@@ -39,7 +39,11 @@ The AI will request a date, time, meeting type (online, physical), email address
     same => n,Hangup()
 ```
 4. Reload your Dial Plans: asterisk -rx "dialplan reload"
-5. Use your Custom Destination in an IVR or elsewhere.
+
+5. Run the app.py (FastAPI) with uvicorn in a separate process (or separate machine): 
+`uvicorn app:app --host 127.0.0.1 --port 8000`
+
+6. Use your Custom Destination in an IVR or elsewhere.
 
 
 ## Next Steps
