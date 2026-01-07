@@ -1,11 +1,13 @@
 import os
 from dotenv import dotenv_values
+from pathlib import Path
 import requests
 import json
 ##===================================================
 class WhatsApp:
     def __init__(self, *args, **kwargs):
-        config = dotenv_values(".env")
+        BASE_DIR = Path(__file__).resolve().parent
+        config = dotenv_values(BASE_DIR / ".env")
         watoken = config['WA_TOKEN']
         wainstance = config['WA_INSTANCE']
         self.stevewa = config['WA_MOBILE']

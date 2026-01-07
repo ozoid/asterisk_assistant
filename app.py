@@ -16,21 +16,16 @@ def load_state(call_id) -> CallState:
         return CallState(
             messages=[],
             intent='unknown',
-            action=None,
-            step=None,
-            reply=None,
             phone=call_id,
-            name=None,
         )
     jobj = json.loads(cast(str, tstate))
     cs = CallState(
-        messages=jobj["messages"],
-        intent=jobj["intent"],
-        action=jobj["action"],
-        step=jobj["step"],
-        reply=jobj["reply"],
-        phone=jobj["phone"],
-        name=jobj["name"],
+        messages=jobj.get("messages"),
+        intent=jobj.get("intent"),
+        step=jobj.get("step",None),
+        reply=jobj.get("reply",None),
+        phone=jobj.get("phone",None),
+        name=jobj.get("name",None),
         )
     return cs
     
@@ -40,28 +35,20 @@ def load_meeting_state(call_id:str)->MeetingState:
     if tstate is None or tstate == "":
         return MeetingState(
             call_id=call_id,
-            user_input=None,
             complete=False,
-            meeting_type=None,
-            date=None,
-            time = None,
-            email_address=None,
-            physical_address=None,
-            name=None,
-            last_prompt=None
         )
     jobj =  json.loads(cast(str, tstate))
     ms = MeetingState(
         call_id=call_id,
-        user_input=jobj["user_input"],
-        complete=jobj["complete"],
-        meeting_type=jobj["meeting_type"],
-        date=jobj["date"],
-        time = jobj["time"],
-        email_address=jobj["email_address"],
-        physical_address=jobj["physical_address"],
-        name=jobj["name"],
-        last_prompt=jobj["last_prompt"]
+        user_input=jobj.get("user_input",None),
+        complete=jobj.get("complete",None),
+        meeting_type=jobj.get("meeting_type",None),
+        date=jobj.get("date",None),
+        time = jobj.get("time",None),
+        email_address=jobj.get("email_address",None),
+        physical_address=jobj.get("physical_address",None),
+        name=jobj.get("name",None),
+        last_prompt=jobj.get("last_prompt",None),
         )
     return ms
 ##==================================================
@@ -76,23 +63,9 @@ def save_meeting_state(call_id,state):
 @app.post("/meeting", response_model=ChatResponse)
 def meeting(input: ChatRequest):
     state = load_meeting_state(input.call_id)
-    ms = MeetingState(
-        call_id=str(input.call_id),
-        user_input=input.text,
-        complete= False,
-        meeting_type=None,
-        date=None,
-        time = None,
-        email_address=None,
-        physical_address=None,
-        name=None,
-        last_prompt=""
-        )
-    state = load_meeting_state(input.call_id)  # Redis / DB
-    if state is not None:
-        state["user_input"] = input.text #[HumanMessage(content=input.text)] 
-        state["call_id"] = input.call_id
-        state["complete"] = False
+    state["user_input"] = input.text #[HumanMessage(content=input.text)] 
+    state["call_id"] = input.call_id
+    state["complete"] = False
     new_state = graph_app.meeting_graph.invoke(state,config={"thread_id": input.call_id})
     save_meeting_state(input.call_id, new_state)
     step = 'meeting_ask'
@@ -111,16 +84,15 @@ def meeting(input: ChatRequest):
 @app.post("/chat", response_model=ChatResponse)
 def chat(input: ChatRequest):
     state = load_state(input.call_id)
-    if state is not None:
-        state["messages"] = [input.text] #[HumanMessage(content=input.text)]
-        state["step"] = input.step
-        state["phone"] = input.call_id
-        state["name"] = input.call_name
+    state["messages"] += [input.text] #[HumanMessage(content=input.text)]
+    state["step"] = input.step
+    state["phone"] = input.call_id
+    state["name"] = input.call_name
+    state["intent"] = input.intent
     result = graph_app.graph.invoke(state,config={"thread_id": input.call_id})
     save_state(input.call_id,state)
     cr = ChatResponse(
         reply=result.get("reply",""),
-        action=result.get("action","unknown"),
         intent=result.get("intent","intent"),
         step=result.get("step",""),
     )

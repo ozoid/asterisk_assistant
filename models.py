@@ -43,18 +43,19 @@ class ChatRequest(BaseModel):
     call_id: str
     call_name: Optional[str]
     text: str
-    chat_history: Optional[str]
-    step: Optional[str]
+    messages: List[str]
+    intent: str
+    step: Optional[str] = None
 ##===================================================
 class ChatResponse(BaseModel):
     reply: str
-    action: str | bool | None = None
+    #action: str | bool | None = None
     intent: Optional[str] = None
     step: Optional[str] = None
 ##===================================================
-class OperationResult(BaseModel):
-    prompt:str = ''
-    state:OperationMode = OperationMode.UNKNOWN
+# class OperationResult(BaseModel):
+#     prompt:str = ''
+#     state:OperationMode = OperationMode.UNKNOWN
 ##===================================================
 class MeetingState(TypedDict):
     call_id: str
@@ -69,11 +70,10 @@ class MeetingState(TypedDict):
     complete: bool
 ##===================================================
 class CallState(TypedDict):
-    messages:List[str]                   # History of messages
-    intent:str                      # the intent discovered initially
-    action: Optional[str]              # the action to do when returned
-    step: Optional[str]                 # what step of the action are we at
-    reply: Optional[str]                # the response to say to the caller
+    messages:List[str]                 # History of messages
+    intent:str                         # the intent/operation mode 
+    step: Optional[str]                # what step of the action are we at
+    reply: Optional[str]               # the response to say to the caller
     phone:Optional[str]                # the phone number
-    name:Optional[str]                  # the callers Name
+    name:Optional[str]                 # the callers Name
     ##===================================================

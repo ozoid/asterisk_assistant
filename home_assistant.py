@@ -1,10 +1,12 @@
 import requests
 import json
 from dotenv import dotenv_values
+from pathlib import Path
 ##===================================================
 class HomeAssistant:
     def __init__(self, *args, **kwargs):
-        config = dotenv_values(".env")
+        BASE_DIR = Path(__file__).resolve().parent
+        config = dotenv_values(BASE_DIR / ".env")
         self.HA_URL = config['HA_URL']
         self.HA_TOKEN = config['HA_TOKEN']
         self.headers = {

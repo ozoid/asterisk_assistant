@@ -2,7 +2,7 @@
 from typing import TypedDict, List
 from fastapi import FastAPI
 from pydantic import BaseModel
-
+from pathlib import Path
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,7 +11,8 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from dotenv import dotenv_values
-config = dotenv_values(".env")
+BASE_DIR = Path(__file__).resolve().parent
+config = dotenv_values(BASE_DIR / ".env")
 
 class CallState(TypedDict):
     messages: List[BaseMessage]
@@ -22,7 +23,7 @@ def intent_node(state):
         "Classify intent: greeting, meeting, question, voicemail, goodbye.\n"
         f"User: {state['messages'][-1].content}"
     )
-    intent = llm.invoke(prompt).content.strip()
+    intent = llm.invoke(prompt).content
     return {"intent": intent}
 
 def ai_node(state: CallState):

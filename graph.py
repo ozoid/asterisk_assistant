@@ -5,12 +5,14 @@ from langchain_core.messages import  SystemMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import dotenv_values
 from models import CallState, MeetingState, Intent
+from pathlib import Path
 import json
 
 ##===================================================
 class ChatModel:
     def __init__(self, *args, **kwargs):
-        self.config = dotenv_values(".env")
+        BASE_DIR = Path(__file__).resolve().parent
+        self.config = dotenv_values(BASE_DIR / ".env")
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-3-pro-preview",
             temperature=1.0,  # Gemini 3.0+ defaults to 1.0
@@ -76,7 +78,7 @@ class ChatModel:
     def do_warmup(self):
         self.llm.invoke("Say OK")
         self.graph = self.build_graph()
-        cs = CallState(messages=[],intent='',action=None,step=None,reply="",phone="",name="")
+        cs = CallState(messages=[],intent='',step=None,reply="",phone="",name="")
         self.graph.invoke(cs,config={"thread_id": "00"})
         self.meeting_graph = self.build_meeting_graph()
         self.meeting_graph.invoke({})
@@ -90,7 +92,7 @@ class ChatModel:
         
         if len(response.content) > 0 and response.content[0] is not None:
             if 'text' in response.content[0]:
-                return response.content[0][0].replace("```json","").replace("```","")
+                return response.content[0]["text"].replace("```json","").replace("```","")
         return None
     ##===================================================
     def extract_info(self,state: MeetingState) -> MeetingState:
@@ -223,7 +225,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply":reply,
-            "action": None
         }
     ##===================================================
     def question_node(self,state: CallState):
@@ -235,7 +236,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "question"
         }
     ##===================================================
     def unknown_node(self,state: CallState):
@@ -247,7 +247,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "unknown"
         }
     ##===================================================
     def voicemail_node(self,state: CallState):
@@ -258,7 +257,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "voicemail"
         }
     ##===================================================
     def mobile_node(self,state: CallState):
@@ -269,7 +267,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "mobile"
         }
     ##===================================================
     def goodbye_node(self,state: CallState):
@@ -280,7 +277,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "hangup"
         }
     ##===================================================
     def lights_node(self,state: CallState):
@@ -291,7 +287,6 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "lights"
         }
     ##===================================================
     def whatsapp_node(self,state: CallState):
@@ -299,7 +294,6 @@ class ChatModel:
         reply = "What is the WhatsApp message you would like to send?"
         return {
             **state,
-            "action": "whatsapp",
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "step": "collect_whatsapp_message",
             "reply": reply,
@@ -310,9 +304,9 @@ class ChatModel:
         reply = "Your WhatsApp message has been sent."
         return {
             **state,
-            "action": "whatsapp",
+            "intent": "unknown",
             "messages": state["messages"] + [SystemMessage(content=reply)],
-            "step": "confirm_whatsapp_message",
+            "step": "complete_whatsapp_message",
             "reply": reply
         }
     ##===================================================
@@ -325,7 +319,6 @@ class ChatModel:
             **state,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "meeting",
             "step": "meeting_ask"
         }
     ##===================================================
@@ -337,23 +330,14 @@ class ChatModel:
             **state,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": "meeting",
             "step": "meeting_confirm"
         }
     ##===================================================
-    def route_by_step(self,state):
-        step = state.get("step")
-        if step == "collect_whatsapp_message":
-            return END
-        if step == "confirm_whatsapp_message":
-            return "whatsapp_confirm"
-
-        return "intent"
+   
     ##===================================================
     ##===================================================
     def intent_node(self,state: CallState):
         print("node_intent")
-        print(state)
         last_msg = ""
         if len(state["messages"]) >0:
             last_msg = state["messages"][-1]
@@ -362,20 +346,34 @@ class ChatModel:
                 **state,
                 "intent": "unknown"
             }    
+        
         namestr = ""
         if state["name"] is not None and state["name"] != "":
             namestr = f"\nThe callers name is {state['name']}"
         intent:AIMessage = self.llm.invoke(self.INTENT_PROMPT.format(text=last_msg+namestr))
-        reply = self.cleanResponse(intent)
-        print(f"Intent chosen:{reply}")
-        if reply not in Intent:
-            print(f"intent {reply} not in Intents")
+        response = self.cleanResponse(intent)
+        print(f"Intent chosen:{response}")
+        if response not in Intent:
+            print(f"intent {response} not in Intents")
             #intent = "unknown"
-
         return {
-            **state,
-            "intent": reply,
-            "action": reply
+                **state,
+                "intent": intent,
+            }
+    ##===================================================   
+    def call_router(self,state: CallState):
+        step = state.get("step")
+        intent = state.get("intent")
+        if intent == "whatsapp":
+            if step == "collect_whatsapp_message":
+                intent = "whatsapp_ask"
+            if step == "confirm_whatsapp_message":
+                intent = "whatsapp_confirm"
+            if step == "complete_whatsapp_message":
+                intent= "goodbye"
+        return {
+                **state,
+                "intent": intent,
         }
     ##===================================================    
     def build_graph(self):
@@ -392,12 +390,8 @@ class ChatModel:
         graph.add_node("whatsapp_confirm", self.whatsapp_confirm_node)
         graph.add_node("lights", self.lights_node)
         graph.add_node("goodbye", self.goodbye_node)
-        graph.set_entry_point("intent")
-        
-        graph.add_conditional_edges("whatsapp_ask", self.route_by_step)
-        graph.add_conditional_edges("whatsapp_confirm", self.route_by_step)
-        #graph.add_conditional_edges("meeting_ask", self.route_by_step)
-        #graph.add_conditional_edges("meeting_confirm", self.route_by_step)
+        graph.add_node("router", self.call_router)
+        graph.set_entry_point("router")
         
         graph.add_conditional_edges(
             "intent",
@@ -405,8 +399,8 @@ class ChatModel:
             {
                 "greeting": "greeting",
                 "question": "question",
-                "voicemail": END,
-                "mobile": END,
+                "voicemail": "voicemail",
+                "mobile": "voicemail",
                 "meeting": "meeting_ask",
                 "whatsapp": "whatsapp_ask",
                 "lights": "lights",
