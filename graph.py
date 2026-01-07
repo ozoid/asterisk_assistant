@@ -35,7 +35,7 @@ class ChatModel:
               if the meeting is a physical in-person you do not need the email address,
               if the meeting is a phone call, we already have the number from the telephone system.
             Return a clean JSON serialized object with any of:
-            [meeting_type, date, time, email_address, physical_address]
+            [meeting_type, name, date, time, email_address, physical_address]
 
             meeting_type can be one of: [zoom, teams, physical, phonecall]
             Only include fields you are confident about."""
@@ -76,26 +76,21 @@ class ChatModel:
     def do_warmup(self):
         self.llm.invoke("Say OK")
         self.graph = self.build_graph()
-        self.graph.invoke({
-             "messages": [],
-             "intent": None,
-             "step": None
-         },
-         config={"thread_id": "00"}
-        )
+        cs = CallState(messages=[],intent='',action=None,step=None,reply="",phone="",name="")
+        self.graph.invoke(cs,config={"thread_id": "00"})
         self.meeting_graph = self.build_meeting_graph()
-        self.meeting_graph.invoke({
-
-        })
+        self.meeting_graph.invoke({})
         print("Warmup complete")
     ##===================================================
-    def cleanResponse(self,response:AIMessage) ->str|None:
+    def cleanResponse(self,response:AIMessage) ->str | None:
         if response.content is None:
             return None
         if len(response.content) == 0:
             return None
-        if response.content[0]['text'] is not None:
-            return response.content[0]['text'].replace("```json","").replace("```","")
+        
+        if len(response.content) > 0 and response.content[0] is not None:
+            if 'text' in response.content[0]:
+                return response.content[0][0].replace("```json","").replace("```","")
         return None
     ##===================================================
     def extract_info(self,state: MeetingState) -> MeetingState:
@@ -112,12 +107,12 @@ class ChatModel:
             print("Exception=No Data")
             return state
         try:
-            data = json.loads(self.cleanResponse(response))
+            data = json.loads(cleaned)
         except Exception:
             print("Exception=Extract_Info")
             return state
 
-        for key in ["meeting_type", "date", "time", "email_address", "physical_address"]:
+        for key in ["meeting_type","name", "date", "time", "email_address", "physical_address"]:
             if key in data and not state.get(key):
                 state[key] = data[key]
         print(f"Extract State:{state}")
@@ -126,6 +121,8 @@ class ChatModel:
     def decide_next_step(self,state: MeetingState) -> str:
         if not state.get("meeting_type"):
             return "ask_type"
+        if not state.get("name"):
+            return "ask_name"
         if not state.get("date"):
             return "ask_date"
         if not state.get("time"):
@@ -135,6 +132,11 @@ class ChatModel:
         if not state.get("email_address") and state.get("meeting_type") != "physical" and state.get("meeting_type") != "phonecall":
             return "ask_email"
         return "confirm"
+    ##===================================================
+    def ask_name(self,state: MeetingState) -> MeetingState:
+        print("node_ask_name")
+        state["last_prompt"] = "Can I take your name please?"
+        return state
     ##===================================================
     def ask_type(self,state: MeetingState) -> MeetingState:
         print("node_ask_type")
@@ -186,7 +188,7 @@ class ChatModel:
         graph.add_node("extract", self.extract_info)
 
         graph.add_node("ask_type", self.ask_type)
-        #graph.add_node("ask_purpose", self.ask_purpose)
+        graph.add_node("ask_name", self.ask_name)
         graph.add_node("ask_date", self.ask_date)
         graph.add_node("ask_time", self.ask_time)
         graph.add_node("ask_email", self.ask_email)
@@ -202,7 +204,7 @@ class ChatModel:
                 "ask_type": "ask_type",
                 "ask_date": "ask_date",
                 "ask_time": "ask_time",
-                #"ask_purpose":"ask_purpose",
+                "ask_name":"ask_name",
                 "ask_email": "ask_email",
                 "ask_physical": "ask_physical",
                 "confirm": "confirm"
@@ -233,7 +235,7 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": None
+            "action": "question"
         }
     ##===================================================
     def unknown_node(self,state: CallState):
@@ -245,7 +247,7 @@ class ChatModel:
             "step": None,
             "messages": state["messages"] + [SystemMessage(content=reply)],
             "reply": reply,
-            "action": None
+            "action": "unknown"
         }
     ##===================================================
     def voicemail_node(self,state: CallState):
@@ -329,7 +331,7 @@ class ChatModel:
     ##===================================================
     def meeting_confirm_node(self,state: CallState):
         print("node_meeting")
-        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state.phone))] + state["messages"])
+        response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state["phone"]))] + state["messages"])
         reply = self.cleanResponse(response)
         return {
             **state,
@@ -372,7 +374,8 @@ class ChatModel:
 
         return {
             **state,
-            "intent": reply
+            "intent": reply,
+            "action": reply
         }
     ##===================================================    
     def build_graph(self):
@@ -416,6 +419,7 @@ class ChatModel:
         graph.add_edge("question", END)
         graph.add_edge("voicemail", END)
         graph.add_edge("mobile", END)
+        graph.add_edge("unknown", END)
         graph.add_edge("meeting_ask",END)
         graph.add_edge("meeting_confirm", END)
         graph.add_edge("whatsapp_ask", END)

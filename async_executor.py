@@ -119,7 +119,7 @@ class AsyncExecutor:
         retry_delay,
         timeout
     ):
-        last_exception = None
+        last_exception =Exception()
 
         for attempt in range(retries + 1):
             try:

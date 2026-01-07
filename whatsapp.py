@@ -14,17 +14,21 @@ class WhatsApp:
             "Content-Type": "application/json",
         }
     ##===================================================
-    def post_whatsApp(self,message):
+    def post_whatsApp(self,message) ->str|None:
         wajson = { 
             "chatId": self.stevewa,
             "message": message 
         }
-        requests.post(
-            self.WHATSAPP_URL, 
-            data = json.dumps(wajson),
-            headers=self.headers,
-            timeout=5
-        ).raise_for_status()
+        try:
+            requests.post(
+                self.WHATSAPP_URL, 
+                data = json.dumps(wajson),
+                headers=self.headers,
+                timeout=5
+            ).raise_for_status()
+            return None
+        except requests.HTTPError as e:
+            return f"{e}"
         
     ##===================================================
 ##===================================================

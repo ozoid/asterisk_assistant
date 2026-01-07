@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from vosk import Model, KaldiRecognizer
 import wave
+import random
 import threading
 import json
 import redis
@@ -41,25 +42,26 @@ class AIAnswer:
         with self.result_lock:
             return self.operation_result
     ##==================================================
-    def clear_state(self,call_id):
-        return self.rdis.set(f"chat_state_{call_id}","")
+    def clear_state(self):
+        return self.rdis.set(f"chat_state_{self.call_id}","")
     ##==================================================
-    def clear_meeting_state(self,call_id):
-        return self.rdis.set(f"meeting_state_{call_id}","")
+    def clear_meeting_state(self):
+        return self.rdis.set(f"meeting_state_{self.call_id}","")
     ##==================================================
     def getCallerID(self):
-        self.unique_id = self.agi.get_variable("UNIQUEID")
+        self.uid = self.agi.get_variable("UNIQUEID")
         self.call_id = self.agi.get_variable("CALLERID(num)")
         self.call_name = self.agi.get_variable("CALLERID(name)")
+        self.unique_id = f"{self.call_id}_{self.uid}_0"
         self.agi.verbose(f"{self.call_id} {self.call_name} {self.unique_id}",3)
     ##===================================================
     def answerCall(self):
         self.agi.answer()
         self.agi.stream_file("custom/ai_start")
     ##===================================================
-    def recordFile(self,turn) -> str:
+    def recordFile(self) -> str:
         fname = "call_"
-        filename = '/tmp/'+ fname + str(turn) 
+        filename = '/tmp/'+ fname + self.unique_id
         format = 'wav' #ulaw'
         intkey = '#'
         timeout = 5000
@@ -71,16 +73,16 @@ class AIAnswer:
     ##===================================================
     def convertAudioIn(self,filename:str):
         sound = AudioSegment.from_file(filename)
-        sound = sound.set_channels(1).set_frame_rate(16000)
         normalisedsound = effects.normalize(sound)
+        normalisedsound = normalisedsound.set_channels(1).set_frame_rate(16000)
         normalisedsound.export(filename, format="wav")
     ##===================================================
-    def convertAudioOut(self,filename:str,turn) -> str:
-        wav_file = f"/tmp/ai_reply_{turn}_{time.time_ns()}.wav"
+    def convertAudioOut(self,filename:str) -> str:
+        wav_file = f"/tmp/stt_{self.unique_id}.wav"
         audio = AudioSegment.from_mp3(filename)
-        audio = audio.set_frame_rate(8000).set_channels(1)
+        #audio = audio.set_channels(1).set_frame_rate(8000)
         audio = AudioSegment.silent(20) + audio + AudioSegment.silent(20)
-        audio.export(wav_file, format="wav", codec="pcm_mulaw", parameters=["-ar", "8000","-ac","1"])
+        audio.export(wav_file, format="wav",  parameters=["-ar", "8000","-ac","1"])
         with open(wav_file, "rb") as f:
             os.fsync(f.fileno())
         return wav_file.replace(".wav","")
@@ -102,13 +104,13 @@ class AIAnswer:
         return text.strip()
     ##===================================================
     def tts(self,text:str) -> str:
-        tts_file = f"/tmp/ai_reply_{self.turn}.mp3"
+        tts_file = f"/tmp/tts_{self.unique_id}.mp3"
         gTTS(text, lang="en").save(tts_file)
         return tts_file
     ##===================================================
-    def recordAndConvert(self,turn) ->str:
+    def recordAndConvert(self) ->str:
         self.agi.stream_file("beep")
-        filename = self.recordFile(turn)
+        filename = self.recordFile()
         self.agi.stream_file("beep")
         self.convertAudioIn(filename)
         return self.stt(filename)
@@ -118,7 +120,7 @@ class AIAnswer:
         if step is None:
             step = ''
         payload = {
-            "unique_id": self.unique_id,
+            "unique_id": self.uid,
             "call_id": self.call_id,
             "call_name": self.call_name,
             "text": text,
@@ -137,12 +139,20 @@ class AIAnswer:
         cresp.step = jval["step"]
         return cresp
     ##===================================================
+    def pleaseWait(self):
+        waits = ["Please wait while I deal with your request.",
+                 "Please wait while I check that for you.",
+                 "Hold on a sec, I'll look into that for you.",
+                 "Hang on while I think about that for a moment."]
+        chosen = waits[random.randint(0, len(waits))]
+        self.playVoice(chosen)
+        
     ##===================================================
-    def playVoice(self,text,uniqueid)->bool:
+    def playVoice(self,text)->bool:
         if not text:
             return False
         tts_file = self.tts(text)
-        wav_file = self.convertAudioOut(tts_file,uniqueid)
+        wav_file = self.convertAudioOut(tts_file)
         self.agi.stream_file(wav_file)
         return True
     ##===================================================
@@ -165,42 +175,58 @@ class AIAnswer:
         self.agi.hangup()
     ##===================================================
     def actionMeetingAsk(self,prompt:str):
-        self.agi.verbose("meetingAsk",3)
         self.agi.verbose(prompt,3)
-        if self.playVoice(prompt,self.unique_id):
+        if self.playVoice(prompt):
             self.agi.verbose(f"played:{prompt}",3)
     ##===================================================
     def actionMeetingConfirm(self,prompt:str):
-        self.playVoice(prompt,self.unique_id)
+        self.playVoice(prompt)
+    ##===================================================
+    def actionQuestion(self,prompt:str):
+        self.playVoice(prompt)
+        self.setResult('',OperationMode.INTENT)
     ##===================================================
     def actionLights(self):
         def toggleLight():
             ha = HomeAssistant()
             ha.toggle_hallway_light()
+
         self.executor.submit(toggleLight, timeout=30)
-        self.playVoice("I have toggled the hallway light.",self.unique_id)
+        self.playVoice("I have toggled the hallway light.")
+        self.setResult('',OperationMode.INTENT)
     ##===================================================
     def actionWAAsk(self,prompt:str):
-        self.playVoice(prompt,self.unique_id)
+        self.playVoice(prompt)
         self.setResult(prompt,OperationMode.WA_CONFIRM)
     ##===================================================
     def actionWAConfirm(self, prompt):
-        def whatsappMessage(message:str):
+        def whatsappMessage(message:str)->str|None:
             wa = WhatsApp()
-            wa.post_whatsApp(message)
+            result = wa.post_whatsApp(message)
+            return result
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        data = f"tel:{self.call_id} name:{self.call_name} DT:{dt}\n {prompt}"
-        self.executor.submit(whatsappMessage, data, timeout=30)
-        self.playVoice(prompt,self.unique_id)
+        data = f"tel:{self.call_id} name:{self.call_name} DT:{dt} - {prompt} [ID:{self.unique_id}]"
+        self.agi.verbose(data,3)
+        #self.executor.submit(whatsappMessage, data, timeout=30)
+        result = whatsappMessage(data)
+        if result is None:
+            self.playVoice(f"Thank you, I will send the message: {prompt} to Steve.")
+        else:
+            self.playVoice(f"Oh No, the message didn't Send. {result}")
+
         self.setResult('',OperationMode.INTENT)
     ##===================================================
-    ## Possible Worker thread!
+    ## [Possible] Worker thread!
     def doResult(self,cresp:ChatResponse,err,ctx):
         '''Determine What action to take and set the ActionResult value,
            Can be triggered from the FastAPI callback (separate thread) or manually through quickFind.
         '''
         if cresp.action == None or cresp.action == "":
-            self.setResult(cresp.reply, OperationMode.UNKNOWN)
+            self.setResult(cresp.reply, OperationMode.INTENT)
+        elif cresp.action == "unknown":
+            self.setResult(cresp.reply,OperationMode.INTENT)
+        elif cresp.action == "question":
+            self.setResult(cresp.reply,OperationMode.QUESTION)
         elif cresp.action == "intent":
             self.setResult(cresp.reply,OperationMode.INTENT)
         elif cresp.action == "hangup":
@@ -230,7 +256,12 @@ class AIAnswer:
         self.agi.verbose(f"Do Action:{operation.state.name}",3)
 
         if operation.state == OperationMode.INTENT:
-            self.playVoice(f"Operation:Intent.",self.unique_id)
+            self.playVoice(f"I'm sorry, I didn't understand you, please try again.")
+            self.setResult("",OperationMode.INTENT)
+            self.ai_state = AIMode.START
+            return None
+        elif operation.state == OperationMode.QUESTION:
+            self.actionQuestion(operation.prompt)
             self.ai_state = AIMode.START
             return None
         elif operation.state == OperationMode.HANGUP:
@@ -262,14 +293,14 @@ class AIAnswer:
             self.ai_state = AIMode.START
             return "confirm_whatsapp_message"
         elif operation.state == OperationMode.WA_CONFIRM:
-            self.actionWAConfirm(operation.prompt)
+            self.actionWAConfirm(cresp.reply)
             self.ai_state = AIMode.ANYTHING_ELSE
             return None
         self.agi.verbose("OPState not found",3)
         #self.ai_state = AIState.ANYTHING_ELSE
         return None
     ##===================================================
-    def quickFind(self,text,cresp:ChatResponse):
+    def quickFind(self,text):
         '''Bypass AI and search the stt result for keywords'''
         def _quickFind(text):
             vmkeys = ["voicemail","voice mail"]
@@ -303,17 +334,19 @@ class AIAnswer:
         cresponse:ChatResponse = ChatResponse(reply='')
         while turn < self.max_turns:
             operation = self.getResult()
-            #self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.state.name} =-",3)
+            self.unique_id = f"{self.call_id}_{self.uid}_{turn}"
+            self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.state.name} =-",3)
             #--------------------------------------
             if self.ai_state == AIMode.START:
                 turn += 1
                 self.ai_state = AIMode.RECORD
             #--------------------------------------
             elif self.ai_state == AIMode.RECORD:
-                text = self.recordAndConvert(turn)
-                self.agi.verbose(f"{text}")
+                text = self.recordAndConvert()
+                self.agi.verbose(f"{text}",3)
+                cresponse.reply = text
                 # if operation.state == OperationState.INTENT:
-                #     (found,step,reply) = self.quickFind(text,cresponse)
+                #     (found,step,reply) = self.quickFind(text)
                 #     if found is not None:       
                 #         cresponse.action = found
                 #         cresponse.step = step
@@ -328,10 +361,7 @@ class AIAnswer:
             elif self.ai_state == AIMode.PROCESSING:
                 if operation.state == OperationMode.MEETING_ASK or operation.state == OperationMode.MEETING_CONFIRM:
                     self.executor.submit(self.generalAIPost,"meeting", text, next_step, callback=self.doResult, timeout=60)#, context=self)
-                elif operation.state == OperationMode.WA_ASK:
-                    pass
                 elif operation.state == OperationMode.WA_CONFIRM:
-                    cresponse.reply = "Thank you. I will send your message to Steve."
                     cresponse.action == "whatsapp" 
                     cresponse.step == "confirm_whatsapp_message"
                     self.ai_state = AIMode.RUN_ACTIONS
@@ -339,7 +369,7 @@ class AIAnswer:
                 else:
                     self.executor.submit(self.generalAIPost,"chat", text, next_step, callback=self.doResult, timeout=60)#, context=self)
                 self.setResult('',OperationMode.UNKNOWN)
-                self.playVoice("Please wait whilst I deal with your request.",self.unique_id)
+                self.pleaseWait()
                 self.ai_state = AIMode.WAIT_RESULT
             #--------------------------------------
             elif self.ai_state == AIMode.WAIT_RESULT:
@@ -353,12 +383,12 @@ class AIAnswer:
                 next_step = self.doActions(cresponse)
             #--------------------------------------
             elif self.ai_state == AIMode.UNKNOWN:
-                self.playVoice("I am sorry, I have not been able to deal with your request. Please try again.",self.unique_id)
+                self.playVoice("I am sorry, I have not been able to deal with your request. Please try again.")
                 turn = 1
                 self.ai_state = AIMode.START
             #--------------------------------------
             elif self.ai_state == AIMode.ANYTHING_ELSE:
-                self.playVoice("Can I help with anything else?",self.unique_id)
+                self.playVoice("Can I help with anything else?")
                 turn += 1
                 self.ai_state = AIMode.START
             #--------------------------------------
@@ -371,7 +401,6 @@ class AIAnswer:
         self.agi.verbose("Stopped",3)
     ##===================================================
     def newCall(self):
-        self.turn = 0
         self.answerCall()
         self.getCallerID()
         self.run()
