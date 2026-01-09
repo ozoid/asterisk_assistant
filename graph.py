@@ -68,6 +68,7 @@ class ChatModel:
             - whatsapp
             - lights
             - goodbye
+            - hangup
             - unknown
 
             Return ONLY the intent word.
@@ -396,6 +397,7 @@ class ChatModel:
         graph.add_node("whatsapp", self.whatsapp_node)        # ask for message
         graph.add_node("lights", self.lights_node)
         graph.add_node("goodbye", self.goodbye_node)
+        graph.add_node("hangup", self.goodbye_node)
         graph.add_node("router", self.call_router)
         graph.set_entry_point("router")
         
@@ -411,6 +413,7 @@ class ChatModel:
                 "meeting": "meeting_ask",
                 "lights": "lights",
                 "goodbye": "goodbye",
+                "hangup": "goodbye",
                 "unknown": END,
                 END: END,
             },
@@ -428,6 +431,7 @@ class ChatModel:
                 "whatsapp": "whatsapp",
                 "lights": "lights",
                 "goodbye": "goodbye",
+                "hangup": "goodbye",
                 "unknown": END,
             }
         )
@@ -442,6 +446,7 @@ class ChatModel:
         graph.add_edge("whatsapp", END)
         graph.add_edge("lights", END)
         graph.add_edge("goodbye", END)
+        graph.add_edge("hangup", END)
         
         memory = InMemorySaver()
         return graph.compile(checkpointer=memory)

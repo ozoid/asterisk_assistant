@@ -35,7 +35,7 @@ class AIAnswer:
         self.operation_mode:OperationMode = OperationMode.INTENT
         self.response_lock = threading.Lock()
         self.current_response:ChatResponse = ChatResponse(reply='',text='')
-        self.executor = AsyncExecutor(max_workers=6)
+        self.executor = AsyncExecutor(max_workers=4)
         self.time = None
     ##===================================================
     def timer(self,fn:str):
@@ -80,7 +80,6 @@ class AIAnswer:
         self.call_id = self.agi.get_variable("CALLERID(num)")
         self.call_name = self.agi.get_variable("CALLERID(name)")
         self.unique_id = f"{self.call_id}_{self.uid}_0"
-        self.agi.verbose(f"{self.call_id} {self.call_name} {self.unique_id}",3)
     ##===================================================
     def answerCall(self):
         self.agi.answer()
@@ -112,7 +111,7 @@ class AIAnswer:
         audio = AudioSegment.silent(20) + audio + AudioSegment.silent(20)
         audio.export(wav_file, format="wav",  parameters=["-ar", "8000","-ac","1"])
         with open(wav_file, "rb") as f:
-            os.fsync(f.fileno())
+            os.fsync(f.fileno()) # ensure closed/done
         return wav_file.replace(".wav","")
     ##===================================================
     def stt(self,filename:str) -> str:
@@ -158,7 +157,6 @@ class AIAnswer:
         return False
     ##===================================================
     def generalAIPost(self,endpoint:str,text:str,intent:str,step:str|None = None) -> ChatResponse:
-        #self.agi.verbose(f"{endpoint}AI {intent} {text}",3)
         if step is None:
             step = ''
         payload = ChatRequest(
@@ -196,7 +194,6 @@ class AIAnswer:
         self.agi.execute(f"EXEC StartMusicOnHold default")
     ##===================================================
     def playVoice(self,text)->bool:
-        self.agi.verbose(f"Playing Voice:{text}")
         if not text:
             return False
         tts_file = self.tts(text)
@@ -236,7 +233,6 @@ class AIAnswer:
 
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = f"tel:{self.call_id} name:{self.call_name} DT:{dt} - {message} [ID:{self.unique_id}]"
-        self.agi.verbose(data,3)
         self.executor.submit(whatsappMessage,data, timeout=20)
         self.playVoice(f"Thank you, I will send the message: {message} to Steve.")
     ##===================================================
@@ -248,6 +244,8 @@ class AIAnswer:
         self.setResult(cresp)
         if cresp.intent == None or cresp.intent == "":
             self.setMode(OperationMode.INTENT)
+        elif cresp.intent == "goodbye":
+            self.setMode(OperationMode.HANGUP)
         elif cresp.intent == "unknown":
             self.setMode(OperationMode.INTENT)
         elif cresp.intent == "error":
@@ -274,14 +272,11 @@ class AIAnswer:
             self.setMode(OperationMode.WA_ASK)
         elif cresp.intent == "whatsapp" and cresp.step == "confirm_whatsapp_message":
             self.setMode(OperationMode.WA_CONFIRM)
-
-        self.agi.verbose(f"Do Result: Intent:{cresp.intent} Step:{cresp.step} Operation:{self.getMode().name}",3)
     ##===================================================
     def doActions(self)->str|None:
         '''Do the action that was chosen and change the state'''
         operation:OperationMode = self.getMode()
         cresp:ChatResponse = self.getResult()
-        self.agi.verbose(f"Do Action:{operation.name}",3)
 
         if operation == OperationMode.INTENT:
             self.playVoice("Can I help with anything else?")
@@ -338,7 +333,6 @@ class AIAnswer:
             self.setMode(OperationMode.INTENT)
             self.ai_state = AIMode.RUN_ACTIONS
             return None
-        self.agi.verbose("OPState not found",3)
         #self.ai_state = AIState.ANYTHING_ELSE
         return None
     ##===================================================
@@ -376,7 +370,6 @@ class AIAnswer:
         while turn < self.max_turns:
             operation = self.getMode()
             self.unique_id = f"{self.call_id}_{self.uid}_{turn}"
-            self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.name} =-",3)
             #--------------------------------------
             if self.ai_state == AIMode.START:
                 turn = 0
@@ -386,7 +379,6 @@ class AIAnswer:
             elif self.ai_state == AIMode.RECORD:
                 text = self.recordAndConvert()
                 self.setText(text)
-                self.agi.verbose(f"{text}",3)
                 self.ai_state = AIMode.PROCESSING
             #--------------------------------------
             elif self.ai_state == AIMode.PROCESSING:
@@ -407,6 +399,7 @@ class AIAnswer:
                     self.ai_state = AIMode.RUN_ACTIONS
             #--------------------------------------
             elif self.ai_state == AIMode.RUN_ACTIONS:
+                self.executor.shutdown()
                 next_step = self.doActions()
                 self.setStep(next_step)
             #--------------------------------------
@@ -420,7 +413,6 @@ class AIAnswer:
             turn += 1
             time.sleep(0.5)
         self.actionHangUp()
-        self.agi.verbose("Stopped",3)
     ##===================================================
     def newCall(self):
         self.answerCall()

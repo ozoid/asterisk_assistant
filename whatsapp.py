@@ -22,7 +22,6 @@ class WhatsApp:
             "message": message 
         }
         data = json.dumps(wajson)
-        print(data)
         try:
             requests.post(
                 self.WHATSAPP_URL, 

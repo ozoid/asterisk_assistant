@@ -3,7 +3,7 @@
 An AI assistant for your telephone line.
 
 Technologies used:
-- FreePBX (Asterisk 22.6.0)
+- FreePBX 17.0.24 (Asterisk 22.6.0)
 - FastAPI
 - Vosk STT
 - Google TTS
