@@ -9,7 +9,6 @@ import wave
 import random
 import threading
 import json
-import redis
 from gtts import gTTS
 from pydub import AudioSegment, effects
 import requests
@@ -18,10 +17,12 @@ from whatsapp import WhatsApp
 from models import *
 from async_executor import AsyncExecutor
 from dotenv import dotenv_values
+
 ##===================================================
 class AIAnswer:
     def __init__(self, *args, **kwargs):
         self.agi       = AGI()
+        self.uid   = "unknown"
         self.call_id   = "unknown"
         self.call_name = "unknown"
         self.unique_id = "unknown"
@@ -33,13 +34,34 @@ class AIAnswer:
         self.mode_lock = threading.Lock()
         self.operation_mode:OperationMode = OperationMode.INTENT
         self.response_lock = threading.Lock()
-        self.current_response:ChatResponse = ChatResponse(reply='')
+        self.current_response:ChatResponse = ChatResponse(reply='',text='')
         self.executor = AsyncExecutor(max_workers=6)
-        self.rdis = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        self.time = None
+    ##===================================================
+    def timer(self,fn:str):
+        if self.time is None:
+            self.time = time.monotonic()
+            self.agi.verbose(f"Function:{fn} 0",3)
+            return
+        now = time.monotonic()
+        self.agi.verbose(f"Function:{fn} {now - self.time}",3)
+        self.time = now
     ##===================================================
     def setResult(self,reponse:ChatResponse):
         with self.response_lock:
             self.current_response = reponse
+    ##===================================================
+    def setReply(self,reply:str):
+        with self.response_lock:
+            self.current_response.reply = reply
+    ##===================================================
+    def setText(self,text:str):
+        with self.response_lock:
+            self.current_response.text = text
+    ##===================================================
+    def setStep(self,step:str|None):
+        with self.response_lock:
+            self.current_response.step = step
     ##===================================================
     def getResult(self) -> ChatResponse:
         with self.response_lock:
@@ -53,12 +75,6 @@ class AIAnswer:
         with self.mode_lock:
             return self.operation_mode
     ##==================================================
-    def clear_state(self):
-        return self.rdis.set(f"chat_state_{self.call_id}","")
-    ##==================================================
-    def clear_meeting_state(self):
-        return self.rdis.set(f"meeting_state_{self.call_id}","")
-    ##==================================================
     def getCallerID(self):
         self.uid = self.agi.get_variable("UNIQUEID")
         self.call_id = self.agi.get_variable("CALLERID(num)")
@@ -71,8 +87,8 @@ class AIAnswer:
         self.agi.stream_file("custom/ai_start")
     ##===================================================
     def recordFile(self) -> str:
-        fname = "call_"
-        filename = '/tmp/'+ fname + self.unique_id
+        tstr = str(time.monotonic())
+        filename = f"/tmp/call_{self.unique_id}_{tstr}"
         format = 'wav' #ulaw'
         intkey = '#'
         timeout = 5000
@@ -89,7 +105,8 @@ class AIAnswer:
         normalisedsound.export(filename, format="wav")
     ##===================================================
     def convertAudioOut(self,filename:str) -> str:
-        wav_file = f"/tmp/stt_{self.unique_id}.wav"
+        tstr = str(time.monotonic())
+        wav_file = f"/tmp/stt_{self.unique_id}_{tstr}.wav"
         audio = AudioSegment.from_mp3(filename)
         #audio = audio.set_channels(1).set_frame_rate(8000)
         audio = AudioSegment.silent(20) + audio + AudioSegment.silent(20)
@@ -115,7 +132,8 @@ class AIAnswer:
         return text.strip()
     ##===================================================
     def tts(self,text:str) -> str:
-        tts_file = f"/tmp/tts_{self.unique_id}.mp3"
+        tstr = str(time.monotonic())
+        tts_file = f"/tmp/tts_{self.unique_id}_{tstr}.mp3"
         gTTS(text, lang="en").save(tts_file)
         return tts_file
     ##===================================================
@@ -126,26 +144,40 @@ class AIAnswer:
         self.convertAudioIn(filename)
         return self.stt(filename)
     ##===================================================
+    def clearState(self,name:str):
+        payload = {
+            "store_name":name,
+            "call_id":self.call_id
+        }
+        response = requests.post(f"http://127.0.0.1:8000/clear_state",  json=payload, timeout=5)
+        if response.status_code !=200:
+            return False
+        jval = response.json()
+        if jval.get("success") == "true":
+            return True
+        return False
+    ##===================================================
     def generalAIPost(self,endpoint:str,text:str,intent:str,step:str|None = None) -> ChatResponse:
-        self.agi.verbose(f"{endpoint}AI",3)
+        #self.agi.verbose(f"{endpoint}AI {intent} {text}",3)
         if step is None:
             step = ''
-        payload = {
-            "chat_history":[""],
-            "unique_id": self.uid,
-            "call_id": self.call_id,
-            "call_name": self.call_name,
-            "text": text,
-            "step": step,
-            "intent":intent
-        }
-        cresp = ChatResponse(reply='')
-        resp = requests.post(f"http://127.0.0.1:8000/{endpoint}",  json=payload, timeout=50)
-        if resp.status_code !=200:
-            cresp.reply = f"Invalid Request/Response from AI {resp.status_code}"
+        payload = ChatRequest(
+            unique_id=self.uid,
+            call_id=self.call_id,
+            call_name=self.call_name,
+            text=text,
+            messages=[],
+            intent=intent,
+            step=step
+        )
+        cresp = ChatResponse(reply='',text=text)
+        data = payload.model_dump_json(exclude_unset=True, exclude_none=True).encode("utf-8")
+        response = requests.post(f"http://127.0.0.1:8000/{endpoint}",  data=data, timeout=50)
+        if response is None or response.status_code !=200:
+            cresp.reply = f"Invalid Request/Response from AI"
             cresp.intent = "error"
             return cresp
-        jval = resp.json()
+        jval = response.json()
         cresp.reply = jval["reply"]
         cresp.intent = jval["intent"]
         cresp.step = jval["step"]
@@ -154,13 +186,17 @@ class AIAnswer:
     def pleaseWait(self):
         waits = ["Please wait while I deal with your request.",
                  "Please wait while I check that for you.",
-                 "Hold on a sec, I'll look into that for you.",
+                 "Hold on a second, I'll look into that for you.",
                  "Hang on while I think about that for a moment."]
         chosen = waits[random.randint(0, len(waits))]
         self.playVoice(chosen)
-        
+        self.playMusic()
+    ##===================================================
+    def playMusic(self):
+        self.agi.execute(f"EXEC StartMusicOnHold default")
     ##===================================================
     def playVoice(self,text)->bool:
+        self.agi.verbose(f"Playing Voice:{text}")
         if not text:
             return False
         tts_file = self.tts(text)
@@ -170,8 +206,7 @@ class AIAnswer:
     ##===================================================
     def actionHangUp(self):
         self.agi.stream_file("custom/ai_bye")
-        self.clear_meeting_state()
-        self.clear_state()
+        self.clearState("all")
         self.agi.hangup()
     ##===================================================
     def actionVoicemail(self):
@@ -186,18 +221,6 @@ class AIAnswer:
         self.agi.stream_file("custom/ai_bye")
         self.agi.hangup()
     ##===================================================
-    def actionMeetingAsk(self,prompt:str):
-        self.agi.verbose(prompt,3)
-        if self.playVoice(prompt):
-            self.agi.verbose(f"played:{prompt}",3)
-    ##===================================================
-    def actionMeetingConfirm(self,prompt:str):
-        self.playVoice(prompt)
-    ##===================================================
-    def actionQuestion(self,prompt:str):
-        self.playVoice(prompt)
-        self.setMode(OperationMode.INTENT)
-    ##===================================================
     def actionLights(self):
         def toggleLight():
             ha = HomeAssistant()
@@ -205,39 +228,30 @@ class AIAnswer:
 
         self.executor.submit(toggleLight, timeout=30)
         self.playVoice("I have toggled the hallway light.")
-        self.setMode(OperationMode.INTENT)
     ##===================================================
-    def actionWAAsk(self,prompt:str):
-        self.playVoice(prompt)
-        self.setMode(OperationMode.WA_CONFIRM)
-    ##===================================================
-    def actionWAConfirm(self, prompt):
+    def actionWAConfirm(self, prompt,message):
         def whatsappMessage(message:str)->str|None:
             wa = WhatsApp()
-            result = wa.post_whatsApp(message)
-            return result
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        data = f"tel:{self.call_id} name:{self.call_name} DT:{dt} - {prompt} [ID:{self.unique_id}]"
-        self.agi.verbose(data,3)
-        
-        result = whatsappMessage(data)
-        if result is None:
-            self.playVoice(f"Thank you, I will send the message: {prompt} to Steve.")
-        else:
-            self.playVoice(f"Oh No, the message didn't Send. {result}")
+            wa.post_whatsApp(message)
 
-        self.setMode(OperationMode.INTENT)
+        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data = f"tel:{self.call_id} name:{self.call_name} DT:{dt} - {message} [ID:{self.unique_id}]"
+        self.agi.verbose(data,3)
+        self.executor.submit(whatsappMessage,data, timeout=20)
+        self.playVoice(f"Thank you, I will send the message: {message} to Steve.")
     ##===================================================
-    ## [Possible] Worker thread!
+    ## Worker thread!
     def doResult(self,cresp:ChatResponse,err,ctx):
         '''Determine What action to take and set the ActionResult value,
-           Can be triggered from the FastAPI callback (separate thread) or manually through quickFind.
+           Triggered from the FastAPI callback (separate thread) [or manually through quickFind].
         '''
         self.setResult(cresp)
         if cresp.intent == None or cresp.intent == "":
             self.setMode(OperationMode.INTENT)
-        elif cresp.intent == "unknown" or cresp.intent == "error":
+        elif cresp.intent == "unknown":
             self.setMode(OperationMode.INTENT)
+        elif cresp.intent == "error":
+            self.setMode(OperationMode.ERROR)
         elif cresp.intent == "question":
             self.setMode(OperationMode.QUESTION)
         elif cresp.intent == "intent":
@@ -261,7 +275,7 @@ class AIAnswer:
         elif cresp.intent == "whatsapp" and cresp.step == "confirm_whatsapp_message":
             self.setMode(OperationMode.WA_CONFIRM)
 
-        self.agi.verbose(f"Intent:{cresp.intent} Step:{cresp.step} Operation:{self.getMode().name}",3)
+        self.agi.verbose(f"Do Result: Intent:{cresp.intent} Step:{cresp.step} Operation:{self.getMode().name}",3)
     ##===================================================
     def doActions(self)->str|None:
         '''Do the action that was chosen and change the state'''
@@ -270,13 +284,19 @@ class AIAnswer:
         self.agi.verbose(f"Do Action:{operation.name}",3)
 
         if operation == OperationMode.INTENT:
-            self.playVoice(f"I'm sorry, I didn't understand you, please try again.")
+            self.playVoice("Can I help with anything else?")
             self.setMode(OperationMode.INTENT)
             self.ai_state = AIMode.START
             return None
+        elif operation == OperationMode.ERROR:
+            self.playVoice(f"I'm sorry, there seems to have been an error, I shall put you through to voicemail. ")
+            self.actionVoicemail()
+            self.ai_state = AIMode.END
+            return None
         elif operation == OperationMode.QUESTION:
-            self.actionQuestion(cresp.reply)
-            self.ai_state = AIMode.START
+            self.playVoice(cresp.reply)
+            self.setMode(OperationMode.INTENT)
+            self.ai_state = AIMode.RUN_ACTIONS
             return None
         elif operation == OperationMode.HANGUP:
             self.actionHangUp()
@@ -291,24 +311,32 @@ class AIAnswer:
             self.ai_state = AIMode.END
             return None
         elif operation == OperationMode.MEETING_ASK:
-            self.actionMeetingAsk(cresp.reply)
+            self.playVoice(cresp.reply)
             self.ai_state = AIMode.START
             return None
         elif operation == OperationMode.MEETING_CONFIRM:
-            self.actionMeetingConfirm(cresp.reply)
-            self.ai_state = AIMode.START
+            self.playVoice(cresp.reply)
+            self.setMode(OperationMode.INTENT)
+            self.ai_state = AIMode.RUN_ACTIONS
             return None
         elif operation == OperationMode.LIGHTS:
             self.actionLights()
-            self.ai_state = AIMode.ANYTHING_ELSE
+            self.setMode(OperationMode.INTENT)
+            self.ai_state = AIMode.RUN_ACTIONS
             return None
         elif operation == OperationMode.WA_ASK:
-            self.actionWAAsk(cresp.reply)
+            self.playVoice(cresp.reply)
+            self.setMode(OperationMode.WA_CONFIRM)
             self.ai_state = AIMode.START
             return "confirm_whatsapp_message"
         elif operation == OperationMode.WA_CONFIRM:
-            self.actionWAConfirm(cresp.reply)
-            self.ai_state = AIMode.ANYTHING_ELSE
+            self.actionWAConfirm(cresp.reply,cresp.text)
+            self.setMode(OperationMode.INTENT)
+            self.ai_state = AIMode.RUN_ACTIONS
+            return None
+        elif operation == OperationMode.ANYTHING_ELSE:
+            self.setMode(OperationMode.INTENT)
+            self.ai_state = AIMode.RUN_ACTIONS
             return None
         self.agi.verbose("OPState not found",3)
         #self.ai_state = AIState.ANYTHING_ELSE
@@ -341,32 +369,35 @@ class AIAnswer:
         return None
     ##===================================================
     def run(self):
-        '''Run the call answering loop max_turns to avoid infinite looping issues or people fooling around.'''
+        '''Run Call Answering Loop.'''
         turn = 0
         text = ''
         next_step = None
-        cresponse:ChatResponse = ChatResponse(reply='')
         while turn < self.max_turns:
             operation = self.getMode()
             self.unique_id = f"{self.call_id}_{self.uid}_{turn}"
             self.agi.verbose(f"-= AIState:{self.ai_state.name} Turn:{turn} Operation:{operation.name} =-",3)
             #--------------------------------------
             if self.ai_state == AIMode.START:
-                turn += 1
+                turn = 0
+                text = ''
                 self.ai_state = AIMode.RECORD
             #--------------------------------------
             elif self.ai_state == AIMode.RECORD:
                 text = self.recordAndConvert()
+                self.setText(text)
                 self.agi.verbose(f"{text}",3)
-                cresponse.reply = text
-                turn += 1
                 self.ai_state = AIMode.PROCESSING
             #--------------------------------------
             elif self.ai_state == AIMode.PROCESSING:
+                intent = OperationMode.intent(operation)
                 if operation == OperationMode.MEETING_ASK or operation == OperationMode.MEETING_CONFIRM:
-                    self.executor.submit(self.generalAIPost,"meeting", text, next_step, callback=self.doResult, timeout=60)#, context=self)
+                    self.executor.submit(self.generalAIPost,"meeting", text, intent, next_step, callback=self.doResult, timeout=60)#, context=self)
+                elif operation == OperationMode.WA_CONFIRM:
+                    self.ai_state = AIMode.RUN_ACTIONS
+                    continue
                 else:
-                    self.executor.submit(self.generalAIPost,"chat", text, next_step, callback=self.doResult, timeout=60)#, context=self)
+                    self.executor.submit(self.generalAIPost,"chat", text, intent, next_step, callback=self.doResult, timeout=60)#, context=self)
                 self.setMode(OperationMode.UNKNOWN)
                 self.pleaseWait()
                 self.ai_state = AIMode.WAIT_RESULT
@@ -374,29 +405,21 @@ class AIAnswer:
             elif self.ai_state == AIMode.WAIT_RESULT:
                 if operation != OperationMode.UNKNOWN:
                     self.ai_state = AIMode.RUN_ACTIONS
-                
-                turn += 1
             #--------------------------------------
             elif self.ai_state == AIMode.RUN_ACTIONS:
-                turn += 1
                 next_step = self.doActions()
+                self.setStep(next_step)
             #--------------------------------------
             elif self.ai_state == AIMode.UNKNOWN:
                 self.playVoice("I am sorry, I have not been able to deal with your request. Please try again.")
-                turn = 1
-                self.ai_state = AIMode.START
-            #--------------------------------------
-            elif self.ai_state == AIMode.ANYTHING_ELSE:
-                self.playVoice("Can I help with anything else?")
-                turn += 1
                 self.ai_state = AIMode.START
             #--------------------------------------
             elif self.ai_state == AIMode.END:
                 break
             #--------------------------------------
+            turn += 1
             time.sleep(0.5)
-        self.agi.stream_file("custom/ai_bye")
-        self.agi.hangup()
+        self.actionHangUp()
         self.agi.verbose("Stopped",3)
     ##===================================================
     def newCall(self):

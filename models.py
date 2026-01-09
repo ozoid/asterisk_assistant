@@ -1,7 +1,6 @@
 from typing import  List, Optional, TypedDict
 from pydantic import BaseModel
 from enum import IntEnum
-from langchain_core.messages import BaseMessage
 ##===================================================
 Intent = [
             "greeting",
@@ -22,7 +21,6 @@ class AIMode(IntEnum):
     PROCESSING  = 3
     WAIT_RESULT = 4
     RUN_ACTIONS = 5
-    ANYTHING_ELSE = 6
     END         = 99
 ##===================================================
 class OperationMode(IntEnum):
@@ -36,44 +34,49 @@ class OperationMode(IntEnum):
     LIGHTS      = 7
     MOBILE      = 8
     QUESTION    = 9
+    ERROR       = 10
+    GREETING    = 11
+    ANYTHING_ELSE = 12
     HANGUP      = 99
+
+    @staticmethod
+    def intent(mode):
+        intents = {OperationMode.INTENT:"intent",
+                   OperationMode.UNKNOWN:"unknown",
+                   OperationMode.WA_ASK:"whatsapp",      
+                   OperationMode.WA_CONFIRM:"whatsapp",  
+                   OperationMode.VOICEMAIL:"voicemail",   
+                   OperationMode.MEETING_ASK:"meeting", 
+                   OperationMode.MEETING_CONFIRM:"meeting",
+                   OperationMode.LIGHTS:"lights",      
+                   OperationMode.MOBILE:"mobile",      
+                   OperationMode.QUESTION:"question",    
+                   OperationMode.ERROR:"error",       
+                   OperationMode.HANGUP:"hangup",
+                   OperationMode.GREETING:"greeting",
+        }
+        return intents[mode]
+        
 ##===================================================
 class ChatRequest(BaseModel):
     unique_id: str
     call_id: str
-    call_name: Optional[str]
+    call_name: Optional[str] = None
     text: str
-    messages: List[str]
-    intent: str
+    messages: List[str] = []
+    intent: str = "unknown"
     step: Optional[str] = None
 ##===================================================
 class ChatResponse(BaseModel):
     reply: str
-    #action: str | bool | None = None
     intent: Optional[str] = None
     step: Optional[str] = None
+    text: str
 ##===================================================
-# class OperationResult(BaseModel):
-#     prompt:str = ''
-#     state:OperationMode = OperationMode.UNKNOWN
-##===================================================
-class MeetingState(TypedDict):
+class StoreDeet(BaseModel):
+    name: str
     call_id: str
-    name: Optional[str] 
-    user_input: Optional[str] 
-    meeting_type: Optional[str] 
-    date: Optional[str] 
-    time: Optional[str] 
-    email_address: Optional[str] 
-    physical_address:Optional[str] 
-    last_prompt: Optional[str]
-    complete: bool
 ##===================================================
-class CallState(TypedDict):
-    messages:List[str]                 # History of messages
-    intent:str                         # the intent/operation mode 
-    step: Optional[str]                # what step of the action are we at
-    reply: Optional[str]               # the response to say to the caller
-    phone:Optional[str]                # the phone number
-    name:Optional[str]                 # the callers Name
-    ##===================================================
+##===================================================
+class StoreResult(BaseModel):
+    success: bool
