@@ -19,7 +19,7 @@ async def clearState(details:StoreDeet):
 ##==================================================
 @app.post("/meeting", response_model=ChatResponse)
 async def meeting(input: ChatRequest):
-    state:MeetingState = store.loadMeetingState(input.call_id)
+    state:MeetingState = store.loadMeetingState(input.call_id) #StateStore.emptyMeetingState(input.call_id) #
     state["user_input"] = input.text #[HumanMessage(content=input.text)] 
     state["call_id"] = input.call_id
     state["complete"] = False
@@ -27,19 +27,20 @@ async def meeting(input: ChatRequest):
         "thread_id": input.call_id,
         #**user_config
     }}
-    new_state = graph_app.meeting_graph.invoke(state,config=tconfig)
-    store.saveMeetingState(input.call_id, new_state)
-    step = 'meeting_ask'
-    end_step = new_state.get("complete", False)
-    if end_step:
-        step="meeting_confirm"
+    # result = MeetingState
+    result = graph_app.meeting_graph.invoke(state,config=tconfig)
+    print(result)
+    store.saveMeetingState(input.call_id, result)
+    step = ""
+    if result.get("complete",True):
+        step = "complete"
     cr = ChatResponse(
-        reply=new_state.get("last_prompt",""),
+        reply=result.get("last_prompt","error"),
         intent="meeting",
         step=step,
         text= input.text
     )
-    #print(cr)
+    print(cr)
     return cr
 ##===================================================
 @app.post("/chat", response_model=ChatResponse)

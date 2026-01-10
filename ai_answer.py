@@ -29,7 +29,7 @@ class AIAnswer:
         BASE_DIR = Path(__file__).resolve().parent
         self.config = dotenv_values(BASE_DIR / ".env")
         self.voskmodel = Model("/opt/vosk-model/vosk-model-small-en-us-0.15")
-        self.max_turns = 60
+        self.max_turns = 240
         self.ai_state:AIMode = AIMode.START
         self.mode_lock = threading.Lock()
         self.operation_mode:OperationMode = OperationMode.INTENT
@@ -144,19 +144,21 @@ class AIAnswer:
         return self.stt(filename)
     ##===================================================
     def clearState(self,name:str):
-        payload = {
-            "store_name":name,
-            "call_id":self.call_id
-        }
-        response = requests.post(f"http://127.0.0.1:8000/clear_state",  json=payload, timeout=5)
+        payload = StoreDeet(
+            name=name,
+            call_id=self.call_id
+        )
+        data = payload.model_dump_json(exclude_unset=True, exclude_none=True).encode("utf-8")
+        response = requests.post(f"http://127.0.0.1:8000/clear_state",  data=data, timeout=5)
         if response.status_code !=200:
             return False
         jval = response.json()
-        if jval.get("success") == "true":
+        if jval.get("success",False) == True:
             return True
         return False
     ##===================================================
     def generalAIPost(self,endpoint:str,text:str,intent:str,step:str|None = None) -> ChatResponse:
+        self.agi.verbose(f"{endpoint}AI")
         if step is None:
             step = ''
         payload = ChatRequest(
@@ -180,6 +182,15 @@ class AIAnswer:
         cresp.intent = jval["intent"]
         cresp.step = jval["step"]
         return cresp
+    ##===================================================
+    def pleaseHangOn(self):
+        waits = ["Thank you for waiting, I shall be with you soon.",
+                 "Thank you for holding on, I am working my hardest to deal with your request.",
+                 "Sorry for the delay, my computer seems to be running slow today.",
+                 "Please continue to hold for a second, I am nearly done."]
+        chosen = waits[random.randint(0, len(waits))]
+        self.playVoice(chosen)
+        self.playMusic()
     ##===================================================
     def pleaseWait(self):
         waits = ["Please wait while I deal with your request.",
@@ -209,21 +220,19 @@ class AIAnswer:
     def actionVoicemail(self):
         mailbox = "1000"
         self.agi.execute(f"EXEC Voicemail {mailbox}@default")
-        self.agi.stream_file("custom/ai_bye")
-        self.agi.hangup()
+        self.actionHangUp()
     ##===================================================
     def actionMobile(self):
         destination = self.config["MOBILE_NUM"]
         self.agi.execute(f"EXEC Dial PJSIP/{destination}")
-        self.agi.stream_file("custom/ai_bye")
-        self.agi.hangup()
+        self.actionHangUp()
     ##===================================================
     def actionLights(self):
         def toggleLight():
             ha = HomeAssistant()
             ha.toggle_hallway_light()
 
-        self.executor.submit(toggleLight, timeout=30)
+        threading.Thread(target=toggleLight,daemon=True).start()
         self.playVoice("I have toggled the hallway light.")
     ##===================================================
     def actionWAConfirm(self, prompt,message):
@@ -233,7 +242,7 @@ class AIAnswer:
 
         dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = f"tel:{self.call_id} name:{self.call_name} DT:{dt} - {message} [ID:{self.unique_id}]"
-        self.executor.submit(whatsappMessage,data, timeout=20)
+        threading.Thread(target=whatsappMessage,args=[data],daemon=True).start()
         self.playVoice(f"Thank you, I will send the message: {message} to Steve.")
     ##===================================================
     ## Worker thread!
@@ -260,12 +269,10 @@ class AIAnswer:
             self.setMode(OperationMode.VOICEMAIL)
         elif cresp.intent == "mobile":
             self.setMode(OperationMode.MOBILE)
-        elif cresp.intent == "meeting" and cresp.step == "meeting_ask":
-            self.setMode(OperationMode.MEETING_ASK)
-        elif cresp.intent == "meeting" and cresp.step == "meeting_confirm":
+        elif cresp.intent == "meeting" and cresp.step == "complete":
             self.setMode(OperationMode.MEETING_CONFIRM)
-        elif cresp.intent == "meeting" and cresp.step == "end":
-            self.setMode(OperationMode.HANGUP)
+        elif cresp.intent == "meeting":
+            self.setMode(OperationMode.MEETING_ASK)
         elif cresp.intent == "lights":
             self.setMode(OperationMode.LIGHTS)
         elif cresp.intent == "whatsapp" and cresp.step == "collect_whatsapp_message":
@@ -370,6 +377,7 @@ class AIAnswer:
         while turn < self.max_turns:
             operation = self.getMode()
             self.unique_id = f"{self.call_id}_{self.uid}_{turn}"
+            self.agi.verbose(f"{self.ai_state.name} {operation.name}",3)
             #--------------------------------------
             if self.ai_state == AIMode.START:
                 turn = 0
@@ -395,11 +403,13 @@ class AIAnswer:
                 self.ai_state = AIMode.WAIT_RESULT
             #--------------------------------------
             elif self.ai_state == AIMode.WAIT_RESULT:
+                if turn % 60 == 0: # every 30 seconds play please hang-on
+                    self.pleaseHangOn()
                 if operation != OperationMode.UNKNOWN:
                     self.ai_state = AIMode.RUN_ACTIONS
             #--------------------------------------
             elif self.ai_state == AIMode.RUN_ACTIONS:
-                self.executor.shutdown()
+                #self.executor.shutdown()
                 next_step = self.doActions()
                 self.setStep(next_step)
             #--------------------------------------

@@ -67,7 +67,6 @@ class ChatModel:
             - mobile
             - whatsapp
             - lights
-            - goodbye
             - hangup
             - unknown
 
@@ -88,7 +87,7 @@ class ChatModel:
         }}
         self.graph.invoke(StateStore.emptyCallState("00"),config=self.tconfig)
         self.meeting_graph = self.build_meeting_graph()
-        self.meeting_graph.invoke(StateStore.emptyMeetingState("00"))
+        self.meeting_graph.invoke(StateStore.emptyMeetingState("00"),config=self.tconfig)
         print("Warmup complete")
     ##===================================================
     def cleanResponse(self, response: AIMessage) -> str | None:
@@ -225,8 +224,8 @@ class ChatModel:
                 "confirm": "confirm"
             }
         )
-
-        return graph.compile()
+        memory = InMemorySaver()
+        return graph.compile(checkpointer=memory)
     ##===================================================
     ##===================================================
     ##===================================================

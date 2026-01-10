@@ -80,7 +80,7 @@ class StateStore:
         ms = MeetingState(
             call_id=call_id,
             user_input=jobj.get("user_input",None),
-            complete=jobj.get("complete",None),
+            complete=jobj.get("complete",False),
             meeting_type=jobj.get("meeting_type",None),
             date=jobj.get("date",None),
             time = jobj.get("time",None),
