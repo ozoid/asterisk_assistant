@@ -1,4 +1,5 @@
 from typing import  List, Optional, TypedDict
+from langchain_core.messages import  BaseMessage
 from pydantic import BaseModel
 from enum import IntEnum
 ##===================================================
@@ -80,3 +81,26 @@ class StoreDeet(BaseModel):
 ##===================================================
 class StoreResult(BaseModel):
     success: bool
+
+##===================================================
+class MeetingState(TypedDict):
+    call_id: str
+    name: Optional[str] 
+    user_input: Optional[str] 
+    meeting_type: Optional[str] 
+    date: Optional[str] 
+    time: Optional[str] 
+    email_address: Optional[str] 
+    physical_address:Optional[str] 
+    last_prompt: Optional[str]
+    complete: bool
+##===================================================
+class CallState(TypedDict):
+    messages:List[BaseMessage]                 # History of messages
+    intent:str                         # the intent/operation mode 
+    step: Optional[str]                # what step of the action are we at
+    reply: Optional[str]               # the response to say to the caller
+    phone:Optional[str]                # the phone number
+    name:Optional[str]                 # the callers Name
+    text:Optional[str]                 # the current callers request
+##===================================================

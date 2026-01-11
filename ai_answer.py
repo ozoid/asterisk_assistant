@@ -168,7 +168,7 @@ class AIAnswer:
             text=text,
             messages=[],
             intent=intent,
-            step=step
+            step=step,
         )
         cresp = ChatResponse(reply='',text=text)
         data = payload.model_dump_json(exclude_unset=True, exclude_none=True).encode("utf-8")

@@ -1,28 +1,8 @@
 import redis
 import json
-from typing import List, Optional, TypedDict, cast
+from typing import cast
+from models import MeetingState,CallState
 
-##===================================================
-class MeetingState(TypedDict):
-    call_id: str
-    name: Optional[str] 
-    user_input: Optional[str] 
-    meeting_type: Optional[str] 
-    date: Optional[str] 
-    time: Optional[str] 
-    email_address: Optional[str] 
-    physical_address:Optional[str] 
-    last_prompt: Optional[str]
-    complete: bool
-##===================================================
-class CallState(TypedDict):
-    messages:List[str]                 # History of messages
-    intent:str                         # the intent/operation mode 
-    step: Optional[str]                # what step of the action are we at
-    reply: Optional[str]               # the response to say to the caller
-    phone:Optional[str]                # the phone number
-    name:Optional[str]                 # the callers Name
-    ##===================================================
 ##===================================================
 class StateStore:
     def __init__(self, *args, **kwargs):
@@ -39,7 +19,8 @@ class StateStore:
                 phone=call_id,
                 step=None,
                 reply=None,
-                name=None
+                name=None,
+                text=None
             )
     ##===================================================
     @staticmethod
@@ -69,6 +50,7 @@ class StateStore:
             reply=jobj.get("reply",None),
             phone=jobj.get("phone",None),
             name=jobj.get("name",None),
+            text=jobj.get("text",None),
             )
         return cs
     ##===================================================    
@@ -91,7 +73,7 @@ class StateStore:
             )
         return ms
     ##===================================================
-    def saveCallState(self,call_id,state:CallState):
+    def saveCallState(self,call_id,state):
         jstate = json.dumps(state)
         return self.rdis.set(f"{self.call_store}{call_id}",jstate)
     ##===================================================

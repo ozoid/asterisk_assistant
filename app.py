@@ -1,9 +1,10 @@
-from typing import cast
-from fastapi import FastAPI #, BackgroundTasks
+from fastapi import FastAPI 
 from graph import ChatModel
 from models import  ChatRequest, ChatResponse, StoreDeet, StoreResult
 from state_store import StateStore, CallState, MeetingState
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import  SystemMessage, AIMessage, BaseMessage, HumanMessage
+
 ##===================================================
 app = FastAPI()
 graph_app = ChatModel()
@@ -45,8 +46,8 @@ async def meeting(input: ChatRequest):
 ##===================================================
 @app.post("/chat", response_model=ChatResponse)
 async def chat(input: ChatRequest):
-    state:CallState = StateStore.emptyCallState(input.call_id) # store.loadCallState(input.call_id)
-    state["messages"] += [input.text] #[HumanMessage(content=input.text)]
+    state:CallState = store.loadCallState(input.call_id) # StateStore.emptyCallState(input.call_id)
+    state["messages"] += [HumanMessage(content=input.text)] #[HumanMessage(content=input.text)]
     state["step"] = input.step
     state["phone"] = input.call_id
     state["name"] = input.call_name
@@ -57,8 +58,8 @@ async def chat(input: ChatRequest):
         #**user_config
     }}
     result = graph_app.graph.invoke(state,config=tconfig)
-    print(state)
-    store.saveCallState(input.call_id,state)
+    print(result)
+    store.saveCallState(input.call_id,result)
     cr = ChatResponse(
         reply=result.get("reply","error"),
         intent=result.get("intent","intent"),

@@ -1,14 +1,13 @@
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import  SystemMessage, AIMessage
+from langchain_core.messages import  SystemMessage, AIMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from dotenv import dotenv_values
-from models import Intent
+from models import Intent,CallState,MeetingState
 from pathlib import Path
-from typing import Any
-from state_store import CallState,MeetingState,StateStore
+from state_store import StateStore
 import json
 
 ##===================================================
@@ -227,83 +226,59 @@ class ChatModel:
         memory = InMemorySaver()
         return graph.compile(checkpointer=memory)
     ##===================================================
-    ##===================================================
-    ##===================================================
-    def greeting_node(self,state: CallState):
+    def greeting_node(self,state: CallState) -> CallState:
         print("node_greeting")
         reply = "Hello! How can I help you today?"
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply":reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def question_node(self,state: CallState):
+    def question_node(self,state: CallState) -> CallState:
         print("node_question")
         response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + state["messages"])
-        print(response)
         reply = self.cleanResponse(response)
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def unknown_node(self,state: CallState):
+    def unknown_node(self,state: CallState) -> CallState:
         print("node_unknown")
         response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + state["messages"])
         print(response)
         reply = self.cleanResponse(response)
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def voicemail_node(self,state: CallState):
+    def voicemail_node(self,state: CallState) -> CallState:
         print("node_voicemail")
         reply = "Forwarding to Voicemail."
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def mobile_node(self,state: CallState):
+    def mobile_node(self,state: CallState) -> CallState:
         print("node_mobile")
         reply = "Forwarding to Mobile Phone."
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def goodbye_node(self,state: CallState):
+    def goodbye_node(self,state: CallState) -> CallState:
         print("node_goodbye")
         reply = "Goodbye. Have a nice day."
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def lights_node(self,state: CallState):
+    def lights_node(self,state: CallState) -> CallState:
         print("node_lights")
         reply = "I have toggled the hallway light."
-        return {
-            **state,
-            "step": None,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def whatsapp_node(self,state: CallState):
+    def whatsapp_node(self,state: CallState) -> CallState:
         step = state.get("step","")
         print(f"node_whatsapp {step}")
         if step == "collect_whatsapp_message" or step == "":
@@ -312,40 +287,31 @@ class ChatModel:
         elif step == "confirm_whatsapp_message":
             reply = "Your WhatsApp message has been sent."
             step = "confirm_whatsapp_message"
-        return {
-            **state,
-            #"messages": state["messages"] + [SystemMessage(content=reply)],
-            "step":step,
-            "reply": reply,
-        }
+        state["reply"] = reply
+        state["step"] = step
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    ##===================================================
-    def meeting_node(self,state: CallState):
+    def meeting_node(self,state: CallState) -> CallState:
         print("node_meeting")
         #response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [self.MEETING_PROMPT] + state["messages"])
         #reply = self.cleanResponse(response)
         reply = "When would you like the meeting to take place?"
-        return {
-            **state,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-            "step": "meeting_ask"
-        }
+        state["reply"] = reply
+        state["step"] = "meeting_ask"
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    def meeting_confirm_node(self,state: CallState):
+    def meeting_confirm_node(self,state: CallState) -> CallState:
         print("node_meeting")
         response:AIMessage = self.llm.invoke([self.SYSTEM_PROMPT] + [SystemMessage(content=self.MEETING_CONFIRM_PROMPT.format(phone=state["phone"]))] + state["messages"])
         reply = self.cleanResponse(response)
-        return {
-            **state,
-            "messages": state["messages"] + [SystemMessage(content=reply)],
-            "reply": reply,
-            "step": "meeting_confirm"
-        }
+        state["reply"] = reply
+        state["step"] = "meeting_confirm"
+        state["messages"] += [SystemMessage(content=reply)]
+        return state
     ##===================================================
-    ##===================================================
-    ##===================================================
-    def intent_node(self,state: CallState):
+    def intent_node(self,state: CallState) -> CallState:
         print("node_intent")
         last_msg = ""
         if len(state["messages"]) >0:
@@ -364,24 +330,20 @@ class ChatModel:
         print(f"Intent chosen:{response}")
         if response not in Intent:
             print(f"intent {response} not in Intents")
-            #intent = "unknown"
-        return {
-                **state,
-                "intent": response,
-            }
+        state["reply"] = response
+        state["step"] = None        
+        return state
     ##===================================================   
-    def call_router(self,state: CallState):
+    def call_router(self,state: CallState) -> CallState:
         step = state.get("step")
         intent = state.get("intent")
        
         if intent == "whatsapp":
             if step == "complete_whatsapp_message":
                 intent= "goodbye"
-        return {
-                **state,
-                "intent": intent,
-                "step": step
-        }
+        state["intent"] = intent
+        state["step"] = None        
+        return state
     ##===================================================    
     def build_graph(self):
         graph = StateGraph(CallState)
@@ -408,7 +370,7 @@ class ChatModel:
                 "greeting": "greeting",
                 "question": "question",
                 "voicemail": "voicemail",
-                "mobile": "voicemail",
+                "mobile": "mobile",
                 "meeting": "meeting_ask",
                 "lights": "lights",
                 "goodbye": "goodbye",
