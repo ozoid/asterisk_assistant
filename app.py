@@ -28,7 +28,6 @@ async def meeting(input: ChatRequest):
         "thread_id": input.call_id,
         #**user_config
     }}
-    # result = MeetingState
     result = graph_app.meeting_graph.invoke(state,config=tconfig)
     print(result)
     store.saveMeetingState(input.call_id, result)

@@ -78,10 +78,9 @@ class StoreDeet(BaseModel):
     name: str
     call_id: str
 ##===================================================
-##===================================================
 class StoreResult(BaseModel):
     success: bool
-
+##===================================================
 ##===================================================
 class MeetingState(TypedDict):
     call_id: str

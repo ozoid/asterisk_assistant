@@ -253,16 +253,14 @@ class AIAnswer:
         self.setResult(cresp)
         if cresp.intent == None or cresp.intent == "":
             self.setMode(OperationMode.INTENT)
+        elif cresp.intent == "unknown" or cresp.intent == "intent":
+            self.setMode(OperationMode.INTENT)
         elif cresp.intent == "goodbye":
             self.setMode(OperationMode.HANGUP)
-        elif cresp.intent == "unknown":
-            self.setMode(OperationMode.INTENT)
         elif cresp.intent == "error":
             self.setMode(OperationMode.ERROR)
         elif cresp.intent == "question":
             self.setMode(OperationMode.QUESTION)
-        elif cresp.intent == "intent":
-            self.setMode(OperationMode.INTENT)
         elif cresp.intent == "hangup":
             self.setMode(OperationMode.HANGUP)
         elif cresp.intent == "voicemail":
@@ -275,10 +273,11 @@ class AIAnswer:
             self.setMode(OperationMode.MEETING_ASK)
         elif cresp.intent == "lights":
             self.setMode(OperationMode.LIGHTS)
-        elif cresp.intent == "whatsapp" and cresp.step == "collect_whatsapp_message":
-            self.setMode(OperationMode.WA_ASK)
         elif cresp.intent == "whatsapp" and cresp.step == "confirm_whatsapp_message":
             self.setMode(OperationMode.WA_CONFIRM)
+        elif cresp.intent == "whatsapp":
+            self.setMode(OperationMode.WA_ASK)
+        
     ##===================================================
     def doActions(self)->str|None:
         '''Do the action that was chosen and change the state'''
