@@ -62,7 +62,7 @@ graph.add_edge("ai", END)
 memory = InMemorySaver()
 app = graph.compile(checkpointer=memory)
 
-call_id = "+447740193170"
+call_id = "+4400000000"
 caller_text = "How can I schedule a meeting with Steve?"
 result = app.invoke(
     {
